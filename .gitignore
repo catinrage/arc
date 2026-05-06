@@ -26,6 +26,7 @@ gateway.json
 config.agent.json
 config.gateway.json
 .service-*-name
+*.log
 
 # OS/editor
 .DS_Store

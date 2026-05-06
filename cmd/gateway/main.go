@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"arc/internal/applog"
 	"arc/internal/config"
 	"arc/internal/mux"
 	"arc/internal/protocol"
@@ -41,6 +42,8 @@ type gateway struct {
 
 	active atomic.Int64
 	total  atomic.Int64
+
+	log *applog.Logger
 }
 
 func main() {
@@ -63,16 +66,22 @@ func main() {
 		log.Fatalf("config: %v", err)
 	}
 
-	gw, err := newGateway(cfg)
+	logger, err := applog.New(cfg.LogLevel, cfg.LogFile)
 	if err != nil {
-		log.Fatalf("gateway: %v", err)
+		log.Fatalf("logger: %v", err)
+	}
+	defer logger.Close()
+
+	gw, err := newGateway(cfg, logger)
+	if err != nil {
+		logger.Fatalf("gateway: %v", err)
 	}
 	if err := gw.run(context.Background()); err != nil {
-		log.Fatal(err)
+		logger.Fatalf("%v", err)
 	}
 }
 
-func newGateway(cfg config.Gateway) (*gateway, error) {
+func newGateway(cfg config.Gateway, logger *applog.Logger) (*gateway, error) {
 	openTimeout, err := config.Duration(cfg.OpenTimeout)
 	if err != nil {
 		return nil, err
@@ -92,6 +101,7 @@ func newGateway(cfg config.Gateway) (*gateway, error) {
 		reconnectMin: reconnectMin,
 		reconnectMax: reconnectMax,
 		slots:        make([]sessionSlot, cfg.Connections),
+		log:          logger,
 	}, nil
 }
 
@@ -108,14 +118,14 @@ func (g *gateway) run(ctx context.Context) error {
 	}
 	defer listener.Close()
 
-	log.Printf("gateway SOCKS5 listening on %s, relay=%s, sessions=%d", addr, g.cfg.RelayURL, g.cfg.Connections)
+	g.log.Infof("gateway SOCKS5 listening on %s, relay=%s, sessions=%d log_file=%q log_level=%s", addr, g.cfg.RelayURL, g.cfg.Connections, g.cfg.LogFile, g.cfg.LogLevel)
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
 			if errors.Is(err, net.ErrClosed) {
 				return nil
 			}
-			log.Printf("accept: %v", err)
+			g.log.Warnf("accept: %v", err)
 			continue
 		}
 		go g.handleConn(ctx, conn)
@@ -138,21 +148,21 @@ func (g *gateway) connectLoop(ctx context.Context, idx int) {
 		})
 		cancel()
 		if err != nil {
-			log.Printf("session %d relay connect failed: %v", idx, err)
+			g.log.Warnf("session %d relay connect failed: %v", idx, err)
 			sleepContext(ctx, backoff)
 			backoff = growBackoff(backoff, g.reconnectMax)
 			continue
 		}
 
-		session := mux.NewSession(wire, nil, g.cfg.BufferSize)
+		session := mux.NewSessionWithLogger(wire, nil, g.cfg.BufferSize, g.log)
 		g.setSession(idx, session)
-		log.Printf("session %d connected", idx)
+		g.log.Infof("session %d connected", idx)
 		backoff = g.reconnectMin
 
 		err = session.Serve(ctx)
 		g.clearSession(idx, session)
 		if err != nil && !errors.Is(err, context.Canceled) {
-			log.Printf("session %d closed: %v", idx, err)
+			g.log.Warnf("session %d closed: %v", idx, err)
 		}
 		sleepContext(ctx, backoff)
 		backoff = growBackoff(backoff, g.reconnectMax)
@@ -174,16 +184,17 @@ func (g *gateway) handleConn(ctx context.Context, conn net.Conn) {
 	req, err := socks.ReadRequest(conn)
 	if err != nil {
 		_ = socks.WriteFailure(conn, 0x05)
-		log.Printf("#%d SOCKS error: %v", connID, err)
+		g.log.Warnf("#%d SOCKS error from %s: %v", connID, conn.RemoteAddr(), err)
 		return
 	}
 
+	g.log.Debugf("#%d SOCKS request %s:%d active=%d", connID, req.Host, req.Port, g.active.Load())
 	openCtx, cancel := context.WithTimeout(ctx, g.openTimeout)
 	stream, err := g.open(openCtx, protocol.OpenRequest{Host: req.Host, Port: req.Port})
 	cancel()
 	if err != nil {
 		_ = socks.WriteFailure(conn, 0x05)
-		log.Printf("#%d open %s:%d failed: %v", connID, req.Host, req.Port, err)
+		g.log.Warnf("#%d open %s:%d failed: %v", connID, req.Host, req.Port, err)
 		return
 	}
 
@@ -192,7 +203,7 @@ func (g *gateway) handleConn(ctx context.Context, conn net.Conn) {
 		return
 	}
 
-	log.Printf("#%d connected %s:%d active=%d", connID, req.Host, req.Port, g.active.Load())
+	g.log.Infof("#%d connected %s:%d active=%d", connID, req.Host, req.Port, g.active.Load())
 	go copyAndClose(stream, conn, g.cfg.BufferSize)
 	copyAndClose(conn, stream, g.cfg.BufferSize)
 }
@@ -270,7 +281,7 @@ func (g *gateway) statsLoop(ctx context.Context) {
 					streams += session.ActiveStreams()
 				}
 			}
-			log.Printf("stats active=%d total=%d sessions=%d/%d streams=%d", g.active.Load(), g.total.Load(), ready, len(g.slots), streams)
+			g.log.Infof("stats active=%d total=%d sessions=%d/%d streams=%d", g.active.Load(), g.total.Load(), ready, len(g.slots), streams)
 		}
 	}
 }

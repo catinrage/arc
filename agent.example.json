@@ -6,5 +6,7 @@
   "reconnect_initial": "250ms",
   "reconnect_max": "5s",
   "stats_interval": "10s",
-  "insecure_tls": false
+  "insecure_tls": false,
+  "log_file": "arc-agent.log",
+  "log_level": "info"
 }

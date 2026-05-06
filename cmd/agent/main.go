@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"arc/internal/applog"
 	"arc/internal/config"
 	"arc/internal/mux"
 	"arc/internal/protocol"
@@ -32,6 +33,8 @@ type agent struct {
 	ready  atomic.Int64
 	active atomic.Int64
 	total  atomic.Int64
+
+	log *applog.Logger
 }
 
 func main() {
@@ -54,14 +57,20 @@ func main() {
 		log.Fatalf("config: %v", err)
 	}
 
-	a, err := newAgent(cfg)
+	logger, err := applog.New(cfg.LogLevel, cfg.LogFile)
 	if err != nil {
-		log.Fatalf("agent: %v", err)
+		log.Fatalf("logger: %v", err)
+	}
+	defer logger.Close()
+
+	a, err := newAgent(cfg, logger)
+	if err != nil {
+		logger.Fatalf("agent: %v", err)
 	}
 	a.run(context.Background())
 }
 
-func newAgent(cfg config.Agent) (*agent, error) {
+func newAgent(cfg config.Agent, logger *applog.Logger) (*agent, error) {
 	targetTimeout, err := config.Duration(cfg.TargetConnectTimeout)
 	if err != nil {
 		return nil, err
@@ -80,11 +89,12 @@ func newAgent(cfg config.Agent) (*agent, error) {
 		targetConnectTimeout: targetTimeout,
 		reconnectMin:         reconnectMin,
 		reconnectMax:         reconnectMax,
+		log:                  logger,
 	}, nil
 }
 
 func (a *agent) run(ctx context.Context) {
-	log.Printf("agent connecting relay=%s sessions=%d", a.cfg.RelayURL, a.cfg.Connections)
+	a.log.Infof("agent connecting relay=%s sessions=%d log_file=%q log_level=%s", a.cfg.RelayURL, a.cfg.Connections, a.cfg.LogFile, a.cfg.LogLevel)
 	for i := 0; i < a.cfg.Connections; i++ {
 		go a.connectLoop(ctx, i)
 		time.Sleep(100 * time.Millisecond)
@@ -108,21 +118,21 @@ func (a *agent) connectLoop(ctx context.Context, idx int) {
 		})
 		cancel()
 		if err != nil {
-			log.Printf("session %d relay connect failed: %v", idx, err)
+			a.log.Warnf("session %d relay connect failed: %v", idx, err)
 			sleepContext(ctx, backoff)
 			backoff = growBackoff(backoff, a.reconnectMax)
 			continue
 		}
 
-		session := mux.NewSession(wire, a.dialTarget, a.cfg.BufferSize)
+		session := mux.NewSessionWithLogger(wire, a.dialTarget, a.cfg.BufferSize, a.log)
 		a.ready.Add(1)
-		log.Printf("session %d ready", idx)
+		a.log.Infof("session %d ready", idx)
 		backoff = a.reconnectMin
 
 		err = session.Serve(ctx)
 		a.ready.Add(-1)
 		if err != nil && !errors.Is(err, context.Canceled) {
-			log.Printf("session %d closed: %v", idx, err)
+			a.log.Warnf("session %d closed: %v", idx, err)
 		}
 		sleepContext(ctx, backoff)
 		backoff = growBackoff(backoff, a.reconnectMax)
@@ -140,6 +150,7 @@ func (a *agent) dialTarget(ctx context.Context, req protocol.OpenRequest) (io.Re
 	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(req.Host, formatPort(req.Port)))
 	if err != nil {
 		a.active.Add(-1)
+		a.log.Warnf("target dial failed %s:%d: %v", req.Host, req.Port, err)
 		return nil, err
 	}
 
@@ -149,6 +160,7 @@ func (a *agent) dialTarget(ctx context.Context, req protocol.OpenRequest) (io.Re
 		_ = tcp.SetKeepAlivePeriod(30 * time.Second)
 	}
 
+	a.log.Debugf("target connected %s:%d active_targets=%d", req.Host, req.Port, a.active.Load())
 	return &countedConn{Conn: conn, done: func() { a.active.Add(-1) }}, nil
 }
 
@@ -164,7 +176,7 @@ func (a *agent) statsLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			log.Printf("stats sessions=%d/%d active_targets=%d total_targets=%d", a.ready.Load(), a.cfg.Connections, a.active.Load(), a.total.Load())
+			a.log.Infof("stats sessions=%d/%d active_targets=%d total_targets=%d", a.ready.Load(), a.cfg.Connections, a.active.Load(), a.total.Load())
 		}
 	}
 }

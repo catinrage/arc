@@ -84,6 +84,7 @@ RELAY_PING_TIMEOUT=20
 RELAY_OPEN_TIMEOUT=20
 RELAY_CLOSE_TIMEOUT=3
 RELAY_LOG_LEVEL=INFO
+RELAY_LOG_FILE=
 ```
 
 ## Gateway
@@ -103,7 +104,9 @@ Important config:
   "listen_port": 1080,
   "connections": 8,
   "buffer_size": 65536,
-  "open_timeout": "10s"
+  "open_timeout": "10s",
+  "log_file": "arc-gateway.log",
+  "log_level": "info"
 }
 ```
 
@@ -124,7 +127,9 @@ Important config:
   "relay_url": "wss://your-relay.example.com/agent",
   "connections": 8,
   "buffer_size": 65536,
-  "target_connect_timeout": "10s"
+  "target_connect_timeout": "10s",
+  "log_file": "arc-agent.log",
+  "log_level": "info"
 }
 ```
 
@@ -174,6 +179,22 @@ SERVICE_USER=root
 ```
 
 `init` expects binaries named `arc-agent` and `arc-gateway` in the same directory as `service.sh`. If `config.agent.json` or `config.gateway.json` is missing, it is created from the matching example file.
+
+For debugging failed SOCKS connects, temporarily set both service configs to:
+
+```json
+{
+  "log_level": "debug"
+}
+```
+
+Then restart and inspect:
+
+```bash
+./service.sh agent restart
+./service.sh gateway restart
+tail -f arc-agent.log arc-gateway.log
+```
 
 ## GitHub Release Pipeline
 

@@ -11,7 +11,7 @@ func TestNewGateway(t *testing.T) {
 	cfg := config.DefaultGateway()
 	cfg.Connections = 2
 
-	gw, err := newGateway(cfg)
+	gw, err := newGateway(cfg, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

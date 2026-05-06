@@ -11,7 +11,7 @@ func TestNewAgent(t *testing.T) {
 	cfg := config.DefaultAgent()
 	cfg.Connections = 3
 
-	a, err := newAgent(cfg)
+	a, err := newAgent(cfg, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

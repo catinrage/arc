@@ -43,3 +43,11 @@ func TestLoadAgentRejectsBadDuration(t *testing.T) {
 		t.Fatal("expected duration error")
 	}
 }
+
+func TestGatewayRejectsBadLogLevel(t *testing.T) {
+	cfg := DefaultGateway()
+	cfg.LogLevel = "verbose"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected log level error")
+	}
+}

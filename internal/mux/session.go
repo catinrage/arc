@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -21,10 +20,18 @@ type Wire interface {
 
 type AcceptFunc func(context.Context, protocol.OpenRequest) (io.ReadWriteCloser, error)
 
+type Logger interface {
+	Debugf(string, ...any)
+	Infof(string, ...any)
+	Warnf(string, ...any)
+	Errorf(string, ...any)
+}
+
 type Session struct {
 	wire       Wire
 	accept     AcceptFunc
 	bufferSize int
+	logger     Logger
 
 	mu      sync.Mutex
 	streams map[uint32]*Stream
@@ -37,6 +44,10 @@ type Session struct {
 }
 
 func NewSession(wire Wire, accept AcceptFunc, bufferSize int) *Session {
+	return NewSessionWithLogger(wire, accept, bufferSize, nil)
+}
+
+func NewSessionWithLogger(wire Wire, accept AcceptFunc, bufferSize int, logger Logger) *Session {
 	if bufferSize <= 0 {
 		bufferSize = 64 << 10
 	}
@@ -44,6 +55,7 @@ func NewSession(wire Wire, accept AcceptFunc, bufferSize int) *Session {
 		wire:       wire,
 		accept:     accept,
 		bufferSize: bufferSize,
+		logger:     logger,
 		streams:    make(map[uint32]*Stream),
 		pending:    make(map[uint32]chan error),
 		nextID:     1,
@@ -188,11 +200,13 @@ func (s *Session) readLoop(ctx context.Context) error {
 	for {
 		raw, err := s.wire.ReadMessage()
 		if err != nil {
+			s.debugf("session read loop stopped: %v", err)
 			return err
 		}
 
 		msg, err := protocol.DecodeMessage(raw)
 		if err != nil {
+			s.warnf("bad protocol message: %v", err)
 			return err
 		}
 
@@ -204,11 +218,14 @@ func (s *Session) readLoop(ctx context.Context) error {
 			}
 			req, err := protocol.DecodeOpen(msg.Payload)
 			if err != nil {
+				s.warnf("bad open stream=%d: %v", msg.StreamID, err)
 				_ = s.send(protocol.Message{Type: protocol.TypeError, StreamID: msg.StreamID, Payload: []byte(err.Error())})
 				continue
 			}
+			s.debugf("open requested stream=%d target=%s:%d", msg.StreamID, req.Host, req.Port)
 			go s.acceptStream(ctx, msg.StreamID, req)
 		case protocol.TypeOpenOK:
+			s.debugf("open ok stream=%d", msg.StreamID)
 			s.completeOpen(msg.StreamID, nil)
 		case protocol.TypeData:
 			stream := s.getStream(msg.StreamID)
@@ -221,6 +238,7 @@ func (s *Session) readLoop(ctx context.Context) error {
 			s.removeStream(msg.StreamID)
 		case protocol.TypeError:
 			err := errors.New(string(msg.Payload))
+			s.warnf("remote error stream=%d: %v", msg.StreamID, err)
 			s.completeOpen(msg.StreamID, err)
 			s.removeStream(msg.StreamID)
 		default:
@@ -232,19 +250,22 @@ func (s *Session) readLoop(ctx context.Context) error {
 func (s *Session) acceptStream(ctx context.Context, id uint32, req protocol.OpenRequest) {
 	conn, err := s.accept(ctx, req)
 	if err != nil {
+		s.warnf("target open failed stream=%d target=%s:%d: %v", id, req.Host, req.Port, err)
 		_ = s.send(protocol.Message{Type: protocol.TypeError, StreamID: id, Payload: []byte(err.Error())})
 		return
 	}
 
 	stream := s.addRemoteStream(id)
 	if err := s.send(protocol.Message{Type: protocol.TypeOpenOK, StreamID: id}); err != nil {
+		s.warnf("open ok send failed stream=%d target=%s:%d: %v", id, req.Host, req.Port, err)
 		_ = conn.Close()
 		s.removeStream(id)
 		return
 	}
+	s.debugf("target open ok stream=%d target=%s:%d", id, req.Host, req.Port)
 
-	go copyAndClose(stream, conn, s.bufferSize)
-	go copyAndClose(conn, stream, s.bufferSize)
+	go s.copyAndClose(stream, conn)
+	go s.copyAndClose(conn, stream)
 }
 
 func (s *Session) send(msg protocol.Message) error {
@@ -339,11 +360,23 @@ func (s *Stream) closeRemote() {
 	})
 }
 
-func copyAndClose(dst io.WriteCloser, src io.ReadCloser, bufferSize int) {
-	buf := make([]byte, bufferSize)
+func (s *Session) copyAndClose(dst io.WriteCloser, src io.ReadCloser) {
+	buf := make([]byte, s.bufferSize)
 	if _, err := io.CopyBuffer(dst, src, buf); err != nil && !errors.Is(err, net.ErrClosed) {
-		log.Printf("copy closed: %v", err)
+		s.debugf("copy closed: %v", err)
 	}
 	_ = dst.Close()
 	_ = src.Close()
+}
+
+func (s *Session) debugf(format string, args ...any) {
+	if s.logger != nil {
+		s.logger.Debugf(format, args...)
+	}
+}
+
+func (s *Session) warnf(format string, args ...any) {
+	if s.logger != nil {
+		s.logger.Warnf(format, args...)
+	}
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -19,6 +20,8 @@ type Gateway struct {
 	ReconnectMax     string `json:"reconnect_max"`
 	StatsInterval    string `json:"stats_interval"`
 	InsecureTLS      bool   `json:"insecure_tls"`
+	LogFile          string `json:"log_file"`
+	LogLevel         string `json:"log_level"`
 }
 
 type Agent struct {
@@ -30,6 +33,8 @@ type Agent struct {
 	ReconnectMax         string `json:"reconnect_max"`
 	StatsInterval        string `json:"stats_interval"`
 	InsecureTLS          bool   `json:"insecure_tls"`
+	LogFile              string `json:"log_file"`
+	LogLevel             string `json:"log_level"`
 }
 
 func DefaultGateway() Gateway {
@@ -43,6 +48,7 @@ func DefaultGateway() Gateway {
 		ReconnectInitial: "250ms",
 		ReconnectMax:     "5s",
 		StatsInterval:    "10s",
+		LogLevel:         "info",
 	}
 }
 
@@ -55,6 +61,7 @@ func DefaultAgent() Agent {
 		ReconnectInitial:     "250ms",
 		ReconnectMax:         "5s",
 		StatsInterval:        "10s",
+		LogLevel:             "info",
 	}
 }
 
@@ -107,6 +114,9 @@ func (c Gateway) Validate() error {
 	if c.BufferSize <= 0 {
 		return errors.New("buffer_size must be positive")
 	}
+	if err := validateLogLevel(c.LogLevel); err != nil {
+		return err
+	}
 	return validateDurations(map[string]string{
 		"open_timeout":      c.OpenTimeout,
 		"reconnect_initial": c.ReconnectInitial,
@@ -125,12 +135,24 @@ func (c Agent) Validate() error {
 	if c.BufferSize <= 0 {
 		return errors.New("buffer_size must be positive")
 	}
+	if err := validateLogLevel(c.LogLevel); err != nil {
+		return err
+	}
 	return validateDurations(map[string]string{
 		"target_connect_timeout": c.TargetConnectTimeout,
 		"reconnect_initial":      c.ReconnectInitial,
 		"reconnect_max":          c.ReconnectMax,
 		"stats_interval":         c.StatsInterval,
 	})
+}
+
+func validateLogLevel(value string) error {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "debug", "info", "warn", "warning", "error":
+		return nil
+	default:
+		return fmt.Errorf("invalid log_level %q", value)
+	}
 }
 
 func Duration(value string) (time.Duration, error) {

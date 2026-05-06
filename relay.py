@@ -26,10 +26,14 @@ total_pairs = 0
 
 
 def configure_logging():
-    logging.basicConfig(
-        level=os.getenv("RELAY_LOG_LEVEL", "INFO"),
-        format="%(asctime)s %(levelname)s %(message)s",
-    )
+    kwargs = {
+        "level": os.getenv("RELAY_LOG_LEVEL", "INFO"),
+        "format": "%(asctime)s %(levelname)s %(message)s",
+    }
+    log_file = os.getenv("RELAY_LOG_FILE", "")
+    if log_file:
+        kwargs["filename"] = log_file
+    logging.basicConfig(**kwargs)
 
 
 def is_open(ws):
