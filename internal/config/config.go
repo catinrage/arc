@@ -43,7 +43,7 @@ type Agent struct {
 
 func DefaultGateway() Gateway {
 	return Gateway{
-		RelayURL:         "wss://ciyn-4f0b00602d-rain.apps.ir-central1.arvancaas.ir/client",
+		RelayURL:         "wss://ciyn-4f0b00602d-rain.apps.ir-central1.arvancaas.ir/client-v2",
 		ListenHost:       "127.0.0.1",
 		ListenPort:       1080,
 		Connections:      8,
@@ -60,7 +60,7 @@ func DefaultGateway() Gateway {
 
 func DefaultAgent() Agent {
 	return Agent{
-		RelayURL:             "wss://ciyn-4f0b00602d-rain.apps.ir-central1.arvancaas.ir/agent",
+		RelayURL:             "wss://ciyn-4f0b00602d-rain.apps.ir-central1.arvancaas.ir/agent-v2",
 		Connections:          8,
 		BufferSize:           64 << 10,
 		TargetConnectTimeout: "10s",

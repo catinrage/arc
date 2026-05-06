@@ -8,18 +8,19 @@ The relay remains Python. The gateway and agent are Go binaries that share a fra
 
 - `relay.py`
   - Python public relay.
-  - Pairs one `/client` WebSocket with one `/agent` WebSocket.
+  - Pairs one `/client-v2` WebSocket with one `/agent-v2` WebSocket for the Go multiplexed protocol.
+  - Keeps legacy `/client` and `/agent` pools separate so old agents cannot be paired with the Go gateway.
   - Forwards binary messages between the pair.
   - Uses bounded queues and configurable timeouts.
 
 - `cmd/gateway`
   - Go SOCKS5 server for the Iran gateway.
-  - Keeps several persistent `/client` WebSockets open.
+  - Keeps several persistent `/client-v2` WebSockets open.
   - Multiplexes local SOCKS TCP streams over those sessions.
 
 - `cmd/agent`
   - Go Germany-side egress agent.
-  - Keeps several persistent `/agent` WebSockets open.
+  - Keeps several persistent `/agent-v2` WebSockets open.
   - Receives logical `OPEN` frames, dials target TCP servers, and relays data.
 
 ## Protocol
@@ -99,7 +100,7 @@ Important config:
 
 ```json
 {
-  "relay_url": "wss://your-relay.example.com/client",
+  "relay_url": "wss://your-relay.example.com/client-v2",
   "listen_host": "127.0.0.1",
   "listen_port": 1080,
   "connections": 8,
@@ -126,7 +127,7 @@ Important config:
 
 ```json
 {
-  "relay_url": "wss://your-relay.example.com/agent",
+  "relay_url": "wss://your-relay.example.com/agent-v2",
   "connections": 8,
   "buffer_size": 65536,
   "target_connect_timeout": "10s",
