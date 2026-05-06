@@ -16,6 +16,8 @@ type Gateway struct {
 	Connections      int    `json:"connections"`
 	BufferSize       int    `json:"buffer_size"`
 	OpenTimeout      string `json:"open_timeout"`
+	RelayHandshake   string `json:"relay_handshake_timeout"`
+	ConnectRamp      string `json:"connect_ramp_interval"`
 	ReconnectInitial string `json:"reconnect_initial"`
 	ReconnectMax     string `json:"reconnect_max"`
 	StatsInterval    string `json:"stats_interval"`
@@ -29,6 +31,8 @@ type Agent struct {
 	Connections          int    `json:"connections"`
 	BufferSize           int    `json:"buffer_size"`
 	TargetConnectTimeout string `json:"target_connect_timeout"`
+	RelayHandshake       string `json:"relay_handshake_timeout"`
+	ConnectRamp          string `json:"connect_ramp_interval"`
 	ReconnectInitial     string `json:"reconnect_initial"`
 	ReconnectMax         string `json:"reconnect_max"`
 	StatsInterval        string `json:"stats_interval"`
@@ -45,6 +49,8 @@ func DefaultGateway() Gateway {
 		Connections:      8,
 		BufferSize:       64 << 10,
 		OpenTimeout:      "10s",
+		RelayHandshake:   "30s",
+		ConnectRamp:      "500ms",
 		ReconnectInitial: "250ms",
 		ReconnectMax:     "5s",
 		StatsInterval:    "10s",
@@ -58,6 +64,8 @@ func DefaultAgent() Agent {
 		Connections:          8,
 		BufferSize:           64 << 10,
 		TargetConnectTimeout: "10s",
+		RelayHandshake:       "30s",
+		ConnectRamp:          "500ms",
 		ReconnectInitial:     "250ms",
 		ReconnectMax:         "5s",
 		StatsInterval:        "10s",
@@ -118,10 +126,12 @@ func (c Gateway) Validate() error {
 		return err
 	}
 	return validateDurations(map[string]string{
-		"open_timeout":      c.OpenTimeout,
-		"reconnect_initial": c.ReconnectInitial,
-		"reconnect_max":     c.ReconnectMax,
-		"stats_interval":    c.StatsInterval,
+		"open_timeout":            c.OpenTimeout,
+		"relay_handshake_timeout": c.RelayHandshake,
+		"connect_ramp_interval":   c.ConnectRamp,
+		"reconnect_initial":       c.ReconnectInitial,
+		"reconnect_max":           c.ReconnectMax,
+		"stats_interval":          c.StatsInterval,
 	})
 }
 
@@ -139,10 +149,12 @@ func (c Agent) Validate() error {
 		return err
 	}
 	return validateDurations(map[string]string{
-		"target_connect_timeout": c.TargetConnectTimeout,
-		"reconnect_initial":      c.ReconnectInitial,
-		"reconnect_max":          c.ReconnectMax,
-		"stats_interval":         c.StatsInterval,
+		"target_connect_timeout":  c.TargetConnectTimeout,
+		"relay_handshake_timeout": c.RelayHandshake,
+		"connect_ramp_interval":   c.ConnectRamp,
+		"reconnect_initial":       c.ReconnectInitial,
+		"reconnect_max":           c.ReconnectMax,
+		"stats_interval":          c.StatsInterval,
 	})
 }
 

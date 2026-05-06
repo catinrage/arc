@@ -34,6 +34,8 @@ type sessionSlot struct {
 type gateway struct {
 	cfg          config.Gateway
 	openTimeout  time.Duration
+	relayTimeout time.Duration
+	connectRamp  time.Duration
 	reconnectMin time.Duration
 	reconnectMax time.Duration
 
@@ -86,6 +88,14 @@ func newGateway(cfg config.Gateway, logger *applog.Logger) (*gateway, error) {
 	if err != nil {
 		return nil, err
 	}
+	relayTimeout, err := config.Duration(cfg.RelayHandshake)
+	if err != nil {
+		return nil, err
+	}
+	connectRamp, err := config.Duration(cfg.ConnectRamp)
+	if err != nil {
+		return nil, err
+	}
 	reconnectMin, err := config.Duration(cfg.ReconnectInitial)
 	if err != nil {
 		return nil, err
@@ -98,6 +108,8 @@ func newGateway(cfg config.Gateway, logger *applog.Logger) (*gateway, error) {
 	return &gateway{
 		cfg:          cfg,
 		openTimeout:  openTimeout,
+		relayTimeout: relayTimeout,
+		connectRamp:  connectRamp,
 		reconnectMin: reconnectMin,
 		reconnectMax: reconnectMax,
 		slots:        make([]sessionSlot, cfg.Connections),
@@ -108,6 +120,7 @@ func newGateway(cfg config.Gateway, logger *applog.Logger) (*gateway, error) {
 func (g *gateway) run(ctx context.Context) error {
 	for i := range g.slots {
 		go g.connectLoop(ctx, i)
+		sleepContext(ctx, g.connectRamp)
 	}
 	go g.statsLoop(ctx)
 
@@ -141,10 +154,12 @@ func (g *gateway) connectLoop(ctx context.Context, idx int) {
 		default:
 		}
 
-		dialCtx, cancel := context.WithTimeout(ctx, g.openTimeout)
+		dialCtx, cancel := context.WithTimeout(ctx, g.relayTimeout)
 		wire, err := wsclient.Dial(dialCtx, g.cfg.RelayURL, wsclient.DialOptions{
-			HandshakeTimeout: g.openTimeout,
+			HandshakeTimeout: g.relayTimeout,
 			InsecureTLS:      g.cfg.InsecureTLS,
+			Logger:           g.log,
+			SessionID:        idx,
 		})
 		cancel()
 		if err != nil {

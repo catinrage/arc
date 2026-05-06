@@ -105,6 +105,8 @@ Important config:
   "connections": 8,
   "buffer_size": 65536,
   "open_timeout": "10s",
+  "relay_handshake_timeout": "30s",
+  "connect_ramp_interval": "500ms",
   "log_file": "arc-gateway.log",
   "log_level": "info"
 }
@@ -128,6 +130,8 @@ Important config:
   "connections": 8,
   "buffer_size": 65536,
   "target_connect_timeout": "10s",
+  "relay_handshake_timeout": "30s",
+  "connect_ramp_interval": "500ms",
   "log_file": "arc-agent.log",
   "log_level": "info"
 }
@@ -195,6 +199,8 @@ Then restart and inspect:
 ./service.sh gateway restart
 tail -f arc-agent.log arc-gateway.log
 ```
+
+If relay handshakes time out at the CDN, reduce `connections` temporarily to `2`, keep `relay_handshake_timeout` at `30s` or higher, and keep `connect_ramp_interval` at `500ms` or `1s`. The debug log will show the exact phase: TCP dial, TLS handshake, upgrade write, or upgrade read.
 
 ## GitHub Release Pipeline
 

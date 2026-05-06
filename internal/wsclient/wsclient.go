@@ -33,6 +33,12 @@ const (
 type DialOptions struct {
 	HandshakeTimeout time.Duration
 	InsecureTLS      bool
+	Logger           Logger
+	SessionID        int
+}
+
+type Logger interface {
+	Debugf(string, ...any)
 }
 
 type Conn struct {
@@ -65,10 +71,12 @@ func Dial(ctx context.Context, rawURL string, opts DialOptions) (*Conn, error) {
 	}
 
 	dialer := net.Dialer{Timeout: timeout, KeepAlive: 30 * time.Second}
+	debugf(opts.Logger, "session %d websocket tcp dial start host=%s timeout=%s", opts.SessionID, host, timeout)
 	conn, err := dialer.DialContext(ctx, "tcp", host)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("tcp dial %s: %w", host, err)
 	}
+	debugf(opts.Logger, "session %d websocket tcp dial ok local=%s remote=%s", opts.SessionID, conn.LocalAddr(), conn.RemoteAddr())
 
 	if tcp, ok := conn.(*net.TCPConn); ok {
 		_ = tcp.SetNoDelay(true)
@@ -88,11 +96,15 @@ func Dial(ctx context.Context, rawURL string, opts DialOptions) (*Conn, error) {
 			ServerName:         serverName,
 			InsecureSkipVerify: opts.InsecureTLS, //nolint:gosec
 			MinVersion:         tls.VersionTLS12,
+			NextProtos:         []string{"http/1.1"},
 		})
+		debugf(opts.Logger, "session %d websocket tls handshake start server_name=%s", opts.SessionID, serverName)
 		if err := tlsConn.HandshakeContext(ctx); err != nil {
 			_ = conn.Close()
-			return nil, err
+			return nil, fmt.Errorf("tls handshake %s: %w", serverName, err)
 		}
+		state := tlsConn.ConnectionState()
+		debugf(opts.Logger, "session %d websocket tls handshake ok version=0x%x cipher=0x%x alpn=%q", opts.SessionID, state.Version, state.CipherSuite, state.NegotiatedProtocol)
 		conn = tlsConn
 	}
 
@@ -107,23 +119,27 @@ func Dial(ctx context.Context, rawURL string, opts DialOptions) (*Conn, error) {
 		path = "/"
 	}
 	req := fmt.Sprintf(
-		"GET %s HTTP/1.1\r\nHost: %s\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: %s\r\nSec-WebSocket-Version: 13\r\n\r\n",
+		"GET %s HTTP/1.1\r\nHost: %s\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: %s\r\nSec-WebSocket-Version: 13\r\nUser-Agent: arc/%s\r\n\r\n",
 		path,
 		u.Host,
 		key,
+		"1",
 	)
+	debugf(opts.Logger, "session %d websocket upgrade write start path=%s host=%s", opts.SessionID, path, u.Host)
 	if _, err := io.WriteString(conn, req); err != nil {
 		_ = conn.Close()
-		return nil, err
+		return nil, fmt.Errorf("websocket upgrade write: %w", err)
 	}
+	debugf(opts.Logger, "session %d websocket upgrade read start", opts.SessionID)
 
 	br := bufio.NewReader(conn)
 	resp, err := http.ReadResponse(br, &http.Request{Method: http.MethodGet})
 	if err != nil {
 		_ = conn.Close()
-		return nil, err
+		return nil, fmt.Errorf("websocket upgrade read: %w", err)
 	}
 	defer resp.Body.Close()
+	debugf(opts.Logger, "session %d websocket upgrade response status=%s", opts.SessionID, resp.Status)
 
 	if resp.StatusCode != http.StatusSwitchingProtocols {
 		_ = conn.Close()
@@ -143,6 +159,7 @@ func Dial(ctx context.Context, rawURL string, opts DialOptions) (*Conn, error) {
 	}
 
 	_ = conn.SetDeadline(time.Time{})
+	debugf(opts.Logger, "session %d websocket connected", opts.SessionID)
 	return &Conn{conn: conn, br: br}, nil
 }
 
@@ -311,4 +328,10 @@ func headerContains(value, token string) bool {
 		}
 	}
 	return false
+}
+
+func debugf(logger Logger, format string, args ...any) {
+	if logger != nil {
+		logger.Debugf(format, args...)
+	}
 }

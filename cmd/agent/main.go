@@ -27,6 +27,8 @@ var (
 type agent struct {
 	cfg                  config.Agent
 	targetConnectTimeout time.Duration
+	relayTimeout         time.Duration
+	connectRamp          time.Duration
 	reconnectMin         time.Duration
 	reconnectMax         time.Duration
 
@@ -75,6 +77,14 @@ func newAgent(cfg config.Agent, logger *applog.Logger) (*agent, error) {
 	if err != nil {
 		return nil, err
 	}
+	relayTimeout, err := config.Duration(cfg.RelayHandshake)
+	if err != nil {
+		return nil, err
+	}
+	connectRamp, err := config.Duration(cfg.ConnectRamp)
+	if err != nil {
+		return nil, err
+	}
 	reconnectMin, err := config.Duration(cfg.ReconnectInitial)
 	if err != nil {
 		return nil, err
@@ -87,6 +97,8 @@ func newAgent(cfg config.Agent, logger *applog.Logger) (*agent, error) {
 	return &agent{
 		cfg:                  cfg,
 		targetConnectTimeout: targetTimeout,
+		relayTimeout:         relayTimeout,
+		connectRamp:          connectRamp,
 		reconnectMin:         reconnectMin,
 		reconnectMax:         reconnectMax,
 		log:                  logger,
@@ -97,7 +109,7 @@ func (a *agent) run(ctx context.Context) {
 	a.log.Infof("agent connecting relay=%s sessions=%d log_file=%q log_level=%s", a.cfg.RelayURL, a.cfg.Connections, a.cfg.LogFile, a.cfg.LogLevel)
 	for i := 0; i < a.cfg.Connections; i++ {
 		go a.connectLoop(ctx, i)
-		time.Sleep(100 * time.Millisecond)
+		sleepContext(ctx, a.connectRamp)
 	}
 	a.statsLoop(ctx)
 }
@@ -111,10 +123,12 @@ func (a *agent) connectLoop(ctx context.Context, idx int) {
 		default:
 		}
 
-		dialCtx, cancel := context.WithTimeout(ctx, a.targetConnectTimeout)
+		dialCtx, cancel := context.WithTimeout(ctx, a.relayTimeout)
 		wire, err := wsclient.Dial(dialCtx, a.cfg.RelayURL, wsclient.DialOptions{
-			HandshakeTimeout: a.targetConnectTimeout,
+			HandshakeTimeout: a.relayTimeout,
 			InsecureTLS:      a.cfg.InsecureTLS,
+			Logger:           a.log,
+			SessionID:        idx,
 		})
 		cancel()
 		if err != nil {
