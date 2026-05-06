@@ -14,6 +14,7 @@ type Gateway struct {
 	ListenHost       string `json:"listen_host"`
 	ListenPort       int    `json:"listen_port"`
 	Connections      int    `json:"connections"`
+	MaxStreams       int    `json:"max_streams_per_session"`
 	BufferSize       int    `json:"buffer_size"`
 	OpenTimeout      string `json:"open_timeout"`
 	RelayHandshake   string `json:"relay_handshake_timeout"`
@@ -46,7 +47,8 @@ func DefaultGateway() Gateway {
 		RelayURL:         "wss://ciyn-4f0b00602d-rain.apps.ir-central1.arvancaas.ir/client-v2",
 		ListenHost:       "127.0.0.1",
 		ListenPort:       1080,
-		Connections:      8,
+		Connections:      32,
+		MaxStreams:       1,
 		BufferSize:       64 << 10,
 		OpenTimeout:      "10s",
 		RelayHandshake:   "30s",
@@ -61,7 +63,7 @@ func DefaultGateway() Gateway {
 func DefaultAgent() Agent {
 	return Agent{
 		RelayURL:             "wss://ciyn-4f0b00602d-rain.apps.ir-central1.arvancaas.ir/agent-v2",
-		Connections:          8,
+		Connections:          32,
 		BufferSize:           64 << 10,
 		TargetConnectTimeout: "10s",
 		RelayHandshake:       "30s",
@@ -118,6 +120,9 @@ func (c Gateway) Validate() error {
 	}
 	if c.Connections <= 0 {
 		return errors.New("connections must be positive")
+	}
+	if c.MaxStreams <= 0 {
+		return errors.New("max_streams_per_session must be positive")
 	}
 	if c.BufferSize <= 0 {
 		return errors.New("buffer_size must be positive")

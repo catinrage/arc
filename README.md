@@ -103,7 +103,8 @@ Important config:
   "relay_url": "wss://your-relay.example.com/client-v2",
   "listen_host": "127.0.0.1",
   "listen_port": 1080,
-  "connections": 8,
+  "connections": 32,
+  "max_streams_per_session": 1,
   "buffer_size": 65536,
   "open_timeout": "10s",
   "relay_handshake_timeout": "30s",
@@ -113,7 +114,7 @@ Important config:
 }
 ```
 
-Increase `connections` if one WebSocket pair becomes a bottleneck or if the relay is sharded.
+For maximum throughput, keep `max_streams_per_session` at `1` and scale by increasing `connections` on both gateway and agent. This gives each SOCKS connection its own physical WebSocket/TCP lane and avoids multiplexing head-of-line blocking.
 
 ## Agent
 
@@ -128,7 +129,7 @@ Important config:
 ```json
 {
   "relay_url": "wss://your-relay.example.com/agent-v2",
-  "connections": 8,
+  "connections": 32,
   "buffer_size": 65536,
   "target_connect_timeout": "10s",
   "relay_handshake_timeout": "30s",
@@ -138,7 +139,7 @@ Important config:
 }
 ```
 
-Run at least as many agent connections as gateway connections. Extra agent connections wait in the relay queue and get paired when gateway sessions reconnect.
+Run at least as many agent connections as gateway connections. For the highway profile, use equal counts such as `32/32` or `64/64`.
 
 ## Service Manager
 
@@ -278,8 +279,8 @@ sysctl net.ipv4.tcp_congestion_control
 
 ## Expected Impact
 
-- Multiplexing over persistent WebSockets: biggest win, usually `2x-10x` better short-connection throughput and much lower connection setup latency.
-- Go gateway and agent: usually `5%-30%` more end-to-end throughput if endpoints were CPU-bound, plus lower memory per connection.
+- One stream per persistent WebSocket: best raw throughput profile on lossy/CDN paths because streams do not share TCP congestion or head-of-line blocking.
+- Go gateway and agent: lower endpoint CPU and memory while preserving many physical relay lanes.
 - Bounded relay queues: lower p95/p99 latency under overload and prevents unbounded relay memory growth.
 - `uvloop` on relay: typically `10%-30%` more Python relay event-loop throughput on Linux.
 - OS tuning: `10%-50%` improvement when defaults were limiting accept queues, ephemeral ports, or TCP recovery.

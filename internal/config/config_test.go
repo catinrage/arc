@@ -14,6 +14,9 @@ func TestLoadGatewayDefaults(t *testing.T) {
 	if cfg.ListenPort != 1080 || cfg.Connections <= 0 || cfg.RelayURL == "" {
 		t.Fatalf("bad defaults: %#v", cfg)
 	}
+	if cfg.MaxStreams != 1 {
+		t.Fatalf("bad max streams default: %d", cfg.MaxStreams)
+	}
 }
 
 func TestLoadGatewayJSONOverridesDefaults(t *testing.T) {
@@ -49,5 +52,13 @@ func TestGatewayRejectsBadLogLevel(t *testing.T) {
 	cfg.LogLevel = "verbose"
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("expected log level error")
+	}
+}
+
+func TestGatewayRejectsBadMaxStreams(t *testing.T) {
+	cfg := DefaultGateway()
+	cfg.MaxStreams = 0
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected max streams error")
 	}
 }

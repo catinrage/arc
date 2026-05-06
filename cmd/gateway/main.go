@@ -29,6 +29,8 @@ var (
 type sessionSlot struct {
 	mu      sync.RWMutex
 	session *mux.Session
+	active  int
+	gen     uint64
 }
 
 type gateway struct {
@@ -205,13 +207,14 @@ func (g *gateway) handleConn(ctx context.Context, conn net.Conn) {
 
 	g.log.Debugf("#%d SOCKS request %s:%d active=%d", connID, req.Host, req.Port, g.active.Load())
 	openCtx, cancel := context.WithTimeout(ctx, g.openTimeout)
-	stream, err := g.open(openCtx, protocol.OpenRequest{Host: req.Host, Port: req.Port})
+	stream, release, err := g.open(openCtx, protocol.OpenRequest{Host: req.Host, Port: req.Port})
 	cancel()
 	if err != nil {
 		_ = socks.WriteFailure(conn, 0x05)
 		g.log.Warnf("#%d open %s:%d failed: %v", connID, req.Host, req.Port, err)
 		return
 	}
+	defer release()
 
 	if err := socks.WriteSuccess(conn); err != nil {
 		_ = stream.Close()
@@ -223,41 +226,96 @@ func (g *gateway) handleConn(ctx context.Context, conn net.Conn) {
 	copyAndClose(conn, stream, g.cfg.BufferSize)
 }
 
-func (g *gateway) open(ctx context.Context, req protocol.OpenRequest) (*mux.Stream, error) {
+func (g *gateway) open(ctx context.Context, req protocol.OpenRequest) (*mux.Stream, func(), error) {
 	if len(g.slots) == 0 {
-		return nil, errors.New("no relay sessions configured")
+		return nil, nil, errors.New("no relay sessions configured")
 	}
 
 	var lastErr error
 	for {
-		start := int(g.next.Add(1))
-		for i := range g.slots {
-			idx := (start + i) % len(g.slots)
-			session := g.getSession(idx)
-			if session == nil {
-				continue
-			}
+		idx, session, release, ok := g.reserveSession()
+		if ok {
 			stream, err := session.Open(ctx, req)
 			if err == nil {
-				return stream, nil
+				return stream, release, nil
 			}
+			release()
+			g.log.Debugf("session %d open failed while reserved: %v", idx, err)
 			lastErr = err
 		}
 
 		select {
 		case <-ctx.Done():
 			if lastErr != nil {
-				return nil, lastErr
+				return nil, nil, lastErr
 			}
-			return nil, ctx.Err()
+			return nil, nil, ctx.Err()
 		case <-time.After(25 * time.Millisecond):
 		}
 	}
 }
 
+func (g *gateway) reserveSession() (int, *mux.Session, func(), bool) {
+	if len(g.slots) == 0 {
+		return 0, nil, nil, false
+	}
+
+	start := int(g.next.Add(1))
+	bestIdx := -1
+	bestActive := int(^uint(0) >> 1)
+
+	for i := range g.slots {
+		idx := (start + i) % len(g.slots)
+		slot := &g.slots[idx]
+		slot.mu.RLock()
+		session := slot.session
+		active := slot.active
+		slot.mu.RUnlock()
+		if session == nil || active >= g.cfg.MaxStreams {
+			continue
+		}
+		if active < bestActive {
+			bestIdx = idx
+			bestActive = active
+			if active == 0 {
+				break
+			}
+		}
+	}
+
+	if bestIdx < 0 {
+		return 0, nil, nil, false
+	}
+
+	slot := &g.slots[bestIdx]
+	slot.mu.Lock()
+	defer slot.mu.Unlock()
+	if slot.session == nil || slot.active >= g.cfg.MaxStreams {
+		return 0, nil, nil, false
+	}
+	slot.active++
+	session := slot.session
+	gen := slot.gen
+	released := false
+	release := func() {
+		slot.mu.Lock()
+		defer slot.mu.Unlock()
+		if released {
+			return
+		}
+		released = true
+		if slot.gen == gen && slot.active > 0 {
+			slot.active--
+		}
+	}
+	return bestIdx, session, release, true
+}
+
 func (g *gateway) setSession(idx int, session *mux.Session) {
 	g.slots[idx].mu.Lock()
 	g.slots[idx].session = session
+	g.slots[idx].active = 0
+	g.slots[idx].gen++
 	g.slots[idx].mu.Unlock()
 }
 
@@ -265,6 +323,7 @@ func (g *gateway) clearSession(idx int, session *mux.Session) {
 	g.slots[idx].mu.Lock()
 	if g.slots[idx].session == session {
 		g.slots[idx].session = nil
+		g.slots[idx].active = 0
 	}
 	g.slots[idx].mu.Unlock()
 }
@@ -291,12 +350,16 @@ func (g *gateway) statsLoop(ctx context.Context) {
 			ready := 0
 			streams := int64(0)
 			for i := range g.slots {
-				if session := g.getSession(i); session != nil {
+				g.slots[i].mu.RLock()
+				session := g.slots[i].session
+				active := g.slots[i].active
+				g.slots[i].mu.RUnlock()
+				if session != nil {
 					ready++
-					streams += session.ActiveStreams()
+					streams += int64(active)
 				}
 			}
-			g.log.Infof("stats active=%d total=%d sessions=%d/%d streams=%d", g.active.Load(), g.total.Load(), ready, len(g.slots), streams)
+			g.log.Infof("stats active=%d total=%d sessions=%d/%d streams=%d max_streams_per_session=%d", g.active.Load(), g.total.Load(), ready, len(g.slots), streams, g.cfg.MaxStreams)
 		}
 	}
 }
