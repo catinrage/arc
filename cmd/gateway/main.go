@@ -163,17 +163,27 @@ func (g *gateway) connectLoop(ctx context.Context, idx int) {
 			Logger:           g.log,
 			SessionID:        idx,
 		})
-		cancel()
 		if err != nil {
+			cancel()
 			g.log.Warnf("session %d relay connect failed: %v", idx, err)
 			sleepContext(ctx, backoff)
 			backoff = growBackoff(backoff, g.reconnectMax)
 			continue
 		}
 
+		if err := waitReady(dialCtx, wire); err != nil {
+			cancel()
+			_ = wire.Close()
+			g.log.Warnf("session %d relay pair failed: %v", idx, err)
+			sleepContext(ctx, backoff)
+			backoff = growBackoff(backoff, g.reconnectMax)
+			continue
+		}
+		cancel()
+
 		session := mux.NewSessionWithLogger(wire, nil, g.cfg.BufferSize, g.log)
 		g.setSession(idx, session)
-		g.log.Infof("session %d connected", idx)
+		g.log.Infof("session %d connected and paired", idx)
 		backoff = g.reconnectMin
 
 		err = session.Serve(ctx)
@@ -184,6 +194,26 @@ func (g *gateway) connectLoop(ctx context.Context, idx int) {
 		sleepContext(ctx, backoff)
 		backoff = growBackoff(backoff, g.reconnectMax)
 	}
+}
+
+func waitReady(ctx context.Context, wire *wsclient.Conn) error {
+	if deadline, ok := ctx.Deadline(); ok {
+		_ = wire.SetDeadline(deadline)
+	}
+	raw, err := wire.ReadMessage()
+	if err != nil {
+		return fmt.Errorf("ready read: %w", err)
+	}
+	_ = wire.SetDeadline(time.Time{})
+
+	msg, err := protocol.DecodeMessage(raw)
+	if err != nil {
+		return fmt.Errorf("ready decode: %w", err)
+	}
+	if msg.Type != protocol.TypeReady {
+		return fmt.Errorf("unexpected first frame type %d", msg.Type)
+	}
+	return nil
 }
 
 func (g *gateway) handleConn(ctx context.Context, conn net.Conn) {

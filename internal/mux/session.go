@@ -227,6 +227,8 @@ func (s *Session) readLoop(ctx context.Context) error {
 		case protocol.TypeOpenOK:
 			s.debugf("open ok stream=%d", msg.StreamID)
 			s.completeOpen(msg.StreamID, nil)
+		case protocol.TypeReady:
+			s.debugf("ready frame ignored inside active session")
 		case protocol.TypeData:
 			stream := s.getStream(msg.StreamID)
 			if stream == nil {

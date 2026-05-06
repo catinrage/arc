@@ -212,6 +212,10 @@ func (c *Conn) WriteMessage(payload []byte) error {
 	return c.writeFrame(opBinary, payload)
 }
 
+func (c *Conn) SetDeadline(t time.Time) error {
+	return c.conn.SetDeadline(t)
+}
+
 func (c *Conn) Close() error {
 	_ = c.writeFrame(opClose, nil)
 	return c.conn.Close()

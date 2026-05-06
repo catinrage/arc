@@ -138,6 +138,14 @@ func (a *agent) connectLoop(ctx context.Context, idx int) {
 			continue
 		}
 
+		if err := sendReady(wire); err != nil {
+			_ = wire.Close()
+			a.log.Warnf("session %d ready send failed: %v", idx, err)
+			sleepContext(ctx, backoff)
+			backoff = growBackoff(backoff, a.reconnectMax)
+			continue
+		}
+
 		session := mux.NewSessionWithLogger(wire, a.dialTarget, a.cfg.BufferSize, a.log)
 		a.ready.Add(1)
 		a.log.Infof("session %d ready", idx)
@@ -151,6 +159,14 @@ func (a *agent) connectLoop(ctx context.Context, idx int) {
 		sleepContext(ctx, backoff)
 		backoff = growBackoff(backoff, a.reconnectMax)
 	}
+}
+
+func sendReady(wire *wsclient.Conn) error {
+	raw, err := protocol.EncodeMessage(protocol.Message{Type: protocol.TypeReady})
+	if err != nil {
+		return err
+	}
+	return wire.WriteMessage(raw)
 }
 
 func (a *agent) dialTarget(ctx context.Context, req protocol.OpenRequest) (io.ReadWriteCloser, error) {

@@ -12,6 +12,7 @@ const (
 	TypeClose
 	TypeError
 	TypeOpenOK
+	TypeReady
 )
 
 const (
