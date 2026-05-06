@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run Go tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -v ./...
+
+      - name: Run relay tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -v
+
+      - name: Build binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          go build -o /tmp/arc-gateway ./cmd/gateway
+          go build -o /tmp/arc-agent ./cmd/agent

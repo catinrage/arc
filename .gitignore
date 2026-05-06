@@ -1,0 +1,35 @@
+# Build outputs
+/bin/
+/dist/
+/build/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Go
+coverage.out
+*.test
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Local runtime/config
+agent.json
+gateway.json
+config.agent.json
+config.gateway.json
+.service-*-name
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp

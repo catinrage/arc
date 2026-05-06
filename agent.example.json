@@ -1,0 +1,10 @@
+{
+  "relay_url": "wss://ciyn-4f0b00602d-rain.apps.ir-central1.arvancaas.ir/agent",
+  "connections": 8,
+  "buffer_size": 65536,
+  "target_connect_timeout": "10s",
+  "reconnect_initial": "250ms",
+  "reconnect_max": "5s",
+  "stats_interval": "10s",
+  "insecure_tls": false
+}

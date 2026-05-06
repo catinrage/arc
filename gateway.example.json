@@ -1,0 +1,12 @@
+{
+  "relay_url": "wss://ciyn-4f0b00602d-rain.apps.ir-central1.arvancaas.ir/client",
+  "listen_host": "127.0.0.1",
+  "listen_port": 1080,
+  "connections": 8,
+  "buffer_size": 65536,
+  "open_timeout": "10s",
+  "reconnect_initial": "250ms",
+  "reconnect_max": "5s",
+  "stats_interval": "10s",
+  "insecure_tls": false
+}
