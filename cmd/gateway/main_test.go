@@ -1,6 +1,7 @@
 package main
 
 import (
+	"net"
 	"testing"
 	"time"
 
@@ -94,5 +95,24 @@ func TestGrowBackoff(t *testing.T) {
 	got = growBackoff(time.Second, time.Second)
 	if got != time.Second {
 		t.Fatalf("got %s", got)
+	}
+}
+
+func TestUDPBindAddrUsesListenHost(t *testing.T) {
+	cfg := config.DefaultGateway()
+	cfg.ListenHost = "127.0.0.1"
+	gw, err := newGateway(cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := gw.udpBindAddr().IP.String(); got != "127.0.0.1" {
+		t.Fatalf("got %s", got)
+	}
+}
+
+func TestUDPReplyAddrUsesControlAddressForUnspecifiedBind(t *testing.T) {
+	got := udpReplyAddr(&net.UDPAddr{IP: net.ParseIP("0.0.0.0"), Port: 53000}, &net.TCPAddr{IP: net.ParseIP("192.0.2.10"), Port: 1080})
+	if got.IP.String() != "192.0.2.10" || got.Port != 53000 {
+		t.Fatalf("unexpected reply addr: %s", got)
 	}
 }

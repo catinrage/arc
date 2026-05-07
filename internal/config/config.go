@@ -17,6 +17,7 @@ type Gateway struct {
 	BurstConnections int    `json:"burst_connections"`
 	MaxStreams       int    `json:"max_streams_per_session"`
 	BufferSize       int    `json:"buffer_size"`
+	UDPEnabled       bool   `json:"udp_enabled"`
 	OpenTimeout      string `json:"open_timeout"`
 	RelayHandshake   string `json:"relay_handshake_timeout"`
 	ConnectRamp      string `json:"connect_ramp_interval"`
@@ -32,6 +33,7 @@ type Agent struct {
 	RelayURL             string `json:"relay_url"`
 	Connections          int    `json:"connections"`
 	BufferSize           int    `json:"buffer_size"`
+	UDPEnabled           bool   `json:"udp_enabled"`
 	TargetConnectTimeout string `json:"target_connect_timeout"`
 	RelayHandshake       string `json:"relay_handshake_timeout"`
 	ConnectRamp          string `json:"connect_ramp_interval"`
@@ -52,6 +54,7 @@ func DefaultGateway() Gateway {
 		BurstConnections: 96,
 		MaxStreams:       1,
 		BufferSize:       64 << 10,
+		UDPEnabled:       true,
 		OpenTimeout:      "10s",
 		RelayHandshake:   "30s",
 		ConnectRamp:      "500ms",
@@ -67,6 +70,7 @@ func DefaultAgent() Agent {
 		RelayURL:             "wss://ciyn-4f0b00602d-rain.apps.ir-central1.arvancaas.ir/agent-v2",
 		Connections:          128,
 		BufferSize:           64 << 10,
+		UDPEnabled:           true,
 		TargetConnectTimeout: "10s",
 		RelayHandshake:       "30s",
 		ConnectRamp:          "500ms",

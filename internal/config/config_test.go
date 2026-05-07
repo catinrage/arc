@@ -17,6 +17,9 @@ func TestLoadGatewayDefaults(t *testing.T) {
 	if cfg.MaxStreams != 1 {
 		t.Fatalf("bad max streams default: %d", cfg.MaxStreams)
 	}
+	if !cfg.UDPEnabled {
+		t.Fatal("expected UDP to be enabled by default")
+	}
 }
 
 func TestLoadGatewayJSONOverridesDefaults(t *testing.T) {

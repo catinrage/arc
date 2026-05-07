@@ -6,6 +6,7 @@
   "burst_connections": 96,
   "max_streams_per_session": 1,
   "buffer_size": 65536,
+  "udp_enabled": true,
   "open_timeout": "10s",
   "relay_handshake_timeout": "30s",
   "connect_ramp_interval": "500ms",

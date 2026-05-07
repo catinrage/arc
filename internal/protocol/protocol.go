@@ -19,6 +19,7 @@ const (
 	headerSize        = 9
 	MaxPayloadSize    = 16 << 20
 	MaxHostNameLength = 255
+	UDPAssociateHost  = "__arc_udp_associate__"
 )
 
 type Message struct {

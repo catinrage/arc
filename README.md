@@ -107,6 +107,7 @@ Important config:
   "burst_connections": 96,
   "max_streams_per_session": 1,
   "buffer_size": 65536,
+  "udp_enabled": true,
   "open_timeout": "10s",
   "relay_handshake_timeout": "30s",
   "connect_ramp_interval": "500ms",
@@ -132,6 +133,7 @@ Important config:
   "relay_url": "wss://your-relay.example.com/agent-v2",
   "connections": 128,
   "buffer_size": 65536,
+  "udp_enabled": true,
   "target_connect_timeout": "10s",
   "relay_handshake_timeout": "30s",
   "connect_ramp_interval": "500ms",
@@ -207,9 +209,9 @@ If relay handshakes time out at the CDN, reduce `connections` temporarily to `2`
 
 ## X-UI / Xray
 
-Arc gateway is currently a TCP SOCKS5 tunnel. Xray may send SOCKS5 `UDP ASSOCIATE` when DNS, UDP, or QUIC traffic is routed through a SOCKS outbound. The gateway will reject that with SOCKS reply `0x07` and log `unsupported socks command udp_associate(3)`.
+Arc gateway supports SOCKS5 TCP `CONNECT` and UDP `ASSOCIATE`. Keep `udp_enabled` set to `true` on both gateway and agent when X-UI/Xray routes DNS, UDP, or QUIC traffic through Arc.
 
-For X-UI, use Arc only for TCP traffic and route UDP/DNS separately. In practice:
+For X-UI, point the SOCKS outbound at the gateway:
 
 ```json
 {
@@ -226,7 +228,7 @@ For X-UI, use Arc only for TCP traffic and route UDP/DNS separately. In practice
 }
 ```
 
-Then avoid routing UDP network traffic to this outbound. If you need DNS through Arc, use TCP DNS or DoH/DoT over TCP instead of UDP DNS.
+Xray will open UDP ASSOCIATE control connections when it needs UDP. The gateway replies with a local UDP bind address and relays those datagrams through the agent over the existing Arc mux stream.
 
 ## GitHub Release Pipeline
 

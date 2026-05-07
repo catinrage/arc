@@ -15,6 +15,7 @@ import (
 	"arc/internal/config"
 	"arc/internal/mux"
 	"arc/internal/protocol"
+	"arc/internal/udprelay"
 	"arc/internal/wsclient"
 )
 
@@ -173,6 +174,21 @@ func (a *agent) dialTarget(ctx context.Context, req protocol.OpenRequest) (io.Re
 	a.active.Add(1)
 	a.total.Add(1)
 
+	if req.Host == protocol.UDPAssociateHost {
+		if !a.cfg.UDPEnabled {
+			a.active.Add(-1)
+			return nil, errors.New("udp is disabled")
+		}
+		assoc, err := udprelay.NewAssociation()
+		if err != nil {
+			a.active.Add(-1)
+			a.log.Warnf("udp associate failed: %v", err)
+			return nil, err
+		}
+		a.log.Debugf("udp associate ready active_targets=%d", a.active.Load())
+		return &countedReadWriteCloser{rw: assoc, done: func() { a.active.Add(-1) }}, nil
+	}
+
 	dialer := net.Dialer{
 		Timeout:   a.targetConnectTimeout,
 		KeepAlive: 30 * time.Second,
@@ -222,6 +238,27 @@ func (c *countedConn) Close() error {
 		c.done()
 	}
 	return c.Conn.Close()
+}
+
+type countedReadWriteCloser struct {
+	rw   io.ReadWriteCloser
+	once atomic.Bool
+	done func()
+}
+
+func (c *countedReadWriteCloser) Read(p []byte) (int, error) {
+	return c.rw.Read(p)
+}
+
+func (c *countedReadWriteCloser) Write(p []byte) (int, error) {
+	return c.rw.Write(p)
+}
+
+func (c *countedReadWriteCloser) Close() error {
+	if c.once.CompareAndSwap(false, true) {
+		c.done()
+	}
+	return c.rw.Close()
 }
 
 func formatPort(port uint16) string {
