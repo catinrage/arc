@@ -46,6 +46,9 @@ type gateway struct {
 
 	active atomic.Int64
 	total  atomic.Int64
+	burst  atomic.Int64
+
+	burstTokens chan struct{}
 
 	log *applog.Logger
 }
@@ -115,6 +118,7 @@ func newGateway(cfg config.Gateway, logger *applog.Logger) (*gateway, error) {
 		reconnectMin: reconnectMin,
 		reconnectMax: reconnectMax,
 		slots:        make([]sessionSlot, cfg.Connections),
+		burstTokens:  make(chan struct{}, cfg.BurstConnections),
 		log:          logger,
 	}, nil
 }
@@ -133,7 +137,7 @@ func (g *gateway) run(ctx context.Context) error {
 	}
 	defer listener.Close()
 
-	g.log.Infof("gateway SOCKS5 listening on %s, relay=%s, sessions=%d log_file=%q log_level=%s", addr, g.cfg.RelayURL, g.cfg.Connections, g.cfg.LogFile, g.cfg.LogLevel)
+	g.log.Infof("gateway SOCKS5 listening on %s, relay=%s, sessions=%d burst=%d max_streams_per_session=%d log_file=%q log_level=%s", addr, g.cfg.RelayURL, g.cfg.Connections, g.cfg.BurstConnections, g.cfg.MaxStreams, g.cfg.LogFile, g.cfg.LogLevel)
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -230,7 +234,7 @@ func (g *gateway) handleConn(ctx context.Context, conn net.Conn) {
 
 	req, err := socks.ReadRequest(conn)
 	if err != nil {
-		_ = socks.WriteFailure(conn, 0x05)
+		_ = socks.WriteFailure(conn, socks.ReplyCodeForError(err))
 		g.log.Warnf("#%d SOCKS error from %s: %v", connID, conn.RemoteAddr(), err)
 		return
 	}
@@ -274,6 +278,15 @@ func (g *gateway) open(ctx context.Context, req protocol.OpenRequest) (*mux.Stre
 			lastErr = err
 		}
 
+		stream, release, err := g.openBurst(ctx, req)
+		if err == nil {
+			return stream, release, nil
+		}
+		if err != errNoBurstCapacity {
+			lastErr = err
+			g.log.Debugf("burst open failed: %v", err)
+		}
+
 		select {
 		case <-ctx.Done():
 			if lastErr != nil {
@@ -283,6 +296,73 @@ func (g *gateway) open(ctx context.Context, req protocol.OpenRequest) (*mux.Stre
 		case <-time.After(25 * time.Millisecond):
 		}
 	}
+}
+
+var errNoBurstCapacity = errors.New("no burst capacity")
+
+func (g *gateway) openBurst(ctx context.Context, req protocol.OpenRequest) (*mux.Stream, func(), error) {
+	if g.cfg.BurstConnections <= 0 {
+		return nil, nil, errNoBurstCapacity
+	}
+
+	select {
+	case g.burstTokens <- struct{}{}:
+	case <-ctx.Done():
+		return nil, nil, ctx.Err()
+	default:
+		return nil, nil, errNoBurstCapacity
+	}
+
+	released := false
+	releaseToken := func() {
+		if released {
+			return
+		}
+		released = true
+		<-g.burstTokens
+		g.burst.Add(-1)
+	}
+	g.burst.Add(1)
+
+	wire, err := wsclient.Dial(ctx, g.cfg.RelayURL, wsclient.DialOptions{
+		HandshakeTimeout: g.relayTimeout,
+		InsecureTLS:      g.cfg.InsecureTLS,
+		Logger:           g.log,
+		SessionID:        -1,
+	})
+	if err != nil {
+		releaseToken()
+		return nil, nil, err
+	}
+
+	if err := waitReady(ctx, wire); err != nil {
+		_ = wire.Close()
+		releaseToken()
+		return nil, nil, err
+	}
+
+	session := mux.NewSessionWithLogger(wire, nil, g.cfg.BufferSize, g.log)
+	serveDone := make(chan struct{})
+	go func() {
+		_ = session.Serve(context.Background())
+		close(serveDone)
+	}()
+
+	stream, err := session.Open(ctx, req)
+	if err != nil {
+		_ = session.Close()
+		<-serveDone
+		releaseToken()
+		return nil, nil, err
+	}
+
+	release := func() {
+		_ = stream.Close()
+		_ = session.Close()
+		<-serveDone
+		releaseToken()
+	}
+	return stream, release, nil
 }
 
 func (g *gateway) reserveSession() (int, *mux.Session, func(), bool) {
@@ -389,7 +469,7 @@ func (g *gateway) statsLoop(ctx context.Context) {
 					streams += int64(active)
 				}
 			}
-			g.log.Infof("stats active=%d total=%d sessions=%d/%d streams=%d max_streams_per_session=%d", g.active.Load(), g.total.Load(), ready, len(g.slots), streams, g.cfg.MaxStreams)
+			g.log.Infof("stats active=%d total=%d sessions=%d/%d streams=%d burst=%d/%d max_streams_per_session=%d", g.active.Load(), g.total.Load(), ready, len(g.slots), streams, g.burst.Load(), g.cfg.BurstConnections, g.cfg.MaxStreams)
 		}
 	}
 }

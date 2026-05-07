@@ -2,6 +2,7 @@ package socks
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"testing"
 )
@@ -55,8 +56,29 @@ func TestReadRequestRejectsUnsupportedCommand(t *testing.T) {
 		0, 80,
 	}
 	_, err := ReadRequest(&rwBuffer{Buffer: bytes.NewBuffer(input)})
-	if err != ErrUnsupportedCommand {
-		t.Fatalf("expected unsupported command, got %v", err)
+	var cmdErr CommandError
+	if !errors.As(err, &cmdErr) || cmdErr.Command != 2 {
+		t.Fatalf("expected unsupported command 2, got %v", err)
+	}
+	if got := ReplyCodeForError(err); got != 0x07 {
+		t.Fatalf("unexpected reply code: %x", got)
+	}
+}
+
+func TestReadRequestReportsUDPAssociate(t *testing.T) {
+	input := []byte{
+		0x05, 0x01, 0x00,
+		0x05, 0x03, 0x00, 0x01,
+		127, 0, 0, 1,
+		0, 53,
+	}
+	_, err := ReadRequest(&rwBuffer{Buffer: bytes.NewBuffer(input)})
+	var cmdErr CommandError
+	if !errors.As(err, &cmdErr) || cmdErr.Command != 3 {
+		t.Fatalf("expected udp associate command, got %v", err)
+	}
+	if got := cmdErr.Error(); got != "unsupported socks command udp_associate(3)" {
+		t.Fatalf("unexpected error: %q", got)
 	}
 }
 

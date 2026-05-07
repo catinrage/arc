@@ -104,6 +104,7 @@ Important config:
   "listen_host": "127.0.0.1",
   "listen_port": 1080,
   "connections": 32,
+  "burst_connections": 96,
   "max_streams_per_session": 1,
   "buffer_size": 65536,
   "open_timeout": "10s",
@@ -114,7 +115,7 @@ Important config:
 }
 ```
 
-For maximum throughput, keep `max_streams_per_session` at `1` and scale by increasing `connections` on both gateway and agent. This gives each SOCKS connection its own physical WebSocket/TCP lane and avoids multiplexing head-of-line blocking.
+For maximum throughput, keep `max_streams_per_session` at `1`. `connections` are always-on lanes; `burst_connections` are temporary one-shot lanes used when all always-on lanes are busy. This avoids multiplexing head-of-line blocking while still handling browser-style connection spikes.
 
 ## Agent
 
@@ -129,7 +130,7 @@ Important config:
 ```json
 {
   "relay_url": "wss://your-relay.example.com/agent-v2",
-  "connections": 32,
+  "connections": 128,
   "buffer_size": 65536,
   "target_connect_timeout": "10s",
   "relay_handshake_timeout": "30s",
@@ -139,7 +140,7 @@ Important config:
 }
 ```
 
-Run at least as many agent connections as gateway connections. For the highway profile, use equal counts such as `32/32` or `64/64`.
+Run enough agent connections for both gateway steady lanes and burst lanes. For the default highway profile, gateway uses `32 + 96`, so agent uses `128`.
 
 ## Service Manager
 
@@ -203,6 +204,29 @@ tail -f arc-agent.log arc-gateway.log
 ```
 
 If relay handshakes time out at the CDN, reduce `connections` temporarily to `2`, keep `relay_handshake_timeout` at `30s` or higher, and keep `connect_ramp_interval` at `500ms` or `1s`. The debug log will show the exact phase: TCP dial, TLS handshake, upgrade write, or upgrade read.
+
+## X-UI / Xray
+
+Arc gateway is currently a TCP SOCKS5 tunnel. Xray may send SOCKS5 `UDP ASSOCIATE` when DNS, UDP, or QUIC traffic is routed through a SOCKS outbound. The gateway will reject that with SOCKS reply `0x07` and log `unsupported socks command udp_associate(3)`.
+
+For X-UI, use Arc only for TCP traffic and route UDP/DNS separately. In practice:
+
+```json
+{
+  "tag": "arc-tcp",
+  "protocol": "socks",
+  "settings": {
+    "servers": [
+      {
+        "address": "127.0.0.1",
+        "port": 1080
+      }
+    ]
+  }
+}
+```
+
+Then avoid routing UDP network traffic to this outbound. If you need DNS through Arc, use TCP DNS or DoH/DoT over TCP instead of UDP DNS.
 
 ## GitHub Release Pipeline
 

@@ -3,6 +3,7 @@
   "listen_host": "127.0.0.1",
   "listen_port": 1080,
   "connections": 32,
+  "burst_connections": 96,
   "max_streams_per_session": 1,
   "buffer_size": 65536,
   "open_timeout": "10s",

@@ -13,9 +13,16 @@ type Request struct {
 	Port uint16
 }
 
+type CommandError struct {
+	Command byte
+}
+
+func (e CommandError) Error() string {
+	return fmt.Sprintf("unsupported socks command %s(%d)", CommandName(e.Command), e.Command)
+}
+
 var (
 	ErrUnsupportedVersion = errors.New("unsupported socks version")
-	ErrUnsupportedCommand = errors.New("unsupported socks command")
 	ErrUnsupportedAddress = errors.New("unsupported socks address type")
 )
 
@@ -44,7 +51,7 @@ func ReadRequest(rw io.ReadWriter) (Request, error) {
 		return Request{}, ErrUnsupportedVersion
 	}
 	if reqHdr[1] != 1 {
-		return Request{}, ErrUnsupportedCommand
+		return Request{}, CommandError{Command: reqHdr[1]}
 	}
 
 	var host string
@@ -85,6 +92,30 @@ func ReadRequest(rw io.ReadWriter) (Request, error) {
 	}
 
 	return Request{Host: host, Port: port}, nil
+}
+
+func CommandName(cmd byte) string {
+	switch cmd {
+	case 1:
+		return "connect"
+	case 2:
+		return "bind"
+	case 3:
+		return "udp_associate"
+	default:
+		return "unknown"
+	}
+}
+
+func ReplyCodeForError(err error) byte {
+	var cmdErr CommandError
+	if errors.As(err, &cmdErr) {
+		return 0x07
+	}
+	if errors.Is(err, ErrUnsupportedAddress) {
+		return 0x08
+	}
+	return 0x05
 }
 
 func WriteSuccess(w io.Writer) error {
