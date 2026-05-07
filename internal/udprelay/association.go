@@ -8,31 +8,32 @@ import (
 )
 
 type Association struct {
-	conn net.PacketConn
-
 	readR *io.PipeReader
 	readW *io.PipeWriter
 
 	writeMu sync.Mutex
 	buffer  []byte
-	cache   sync.Map
 
-	once sync.Once
+	flowMu sync.Mutex
+	flows  map[uint64]*udpFlow
+
+	readMu sync.Mutex
+	once   sync.Once
+}
+
+type udpFlow struct {
+	id    uint64
+	conn  net.PacketConn
+	cache sync.Map
 }
 
 func NewAssociation() (*Association, error) {
-	conn, err := net.ListenPacket("udp", "")
-	if err != nil {
-		return nil, err
-	}
 	readR, readW := io.Pipe()
-	a := &Association{
-		conn:  conn,
+	return &Association{
 		readR: readR,
 		readW: readW,
-	}
-	go a.readLoop()
-	return a, nil
+		flows: make(map[uint64]*udpFlow),
+	}, nil
 }
 
 func (a *Association) Read(p []byte) (int, error) {
@@ -44,7 +45,7 @@ func (a *Association) Write(p []byte) (int, error) {
 	defer a.writeMu.Unlock()
 
 	a.buffer = append(a.buffer, p...)
-	if err := DecodeBuffered(&a.buffer, a.writePacket); err != nil {
+	if err := DecodeBuffered(&a.buffer, a.handlePacket); err != nil {
 		return 0, err
 	}
 	if len(a.buffer) == 0 && cap(a.buffer) > MaxPayload*2 {
@@ -56,19 +57,72 @@ func (a *Association) Write(p []byte) (int, error) {
 func (a *Association) Close() error {
 	var err error
 	a.once.Do(func() {
-		err = a.conn.Close()
+		a.flowMu.Lock()
+		for id, flow := range a.flows {
+			_ = flow.conn.Close()
+			delete(a.flows, id)
+		}
+		a.flowMu.Unlock()
 		_ = a.readR.Close()
-		_ = a.readW.Close()
+		err = a.readW.Close()
 	})
 	return err
 }
 
-func (a *Association) readLoop() {
+func (a *Association) handlePacket(pkt Packet) error {
+	if pkt.Close {
+		a.closeFlow(pkt.AssociationID)
+		return nil
+	}
+	if pkt.Port == 0 {
+		return fmt.Errorf("udp target port is zero for host %q", pkt.Host)
+	}
+	flow, err := a.flow(pkt.AssociationID)
+	if err != nil {
+		return err
+	}
+	addr, err := flow.resolve(pkt.Host, pkt.Port)
+	if err != nil {
+		return err
+	}
+	_, err = flow.conn.WriteTo(pkt.Payload, addr)
+	return err
+}
+
+func (a *Association) flow(id uint64) (*udpFlow, error) {
+	a.flowMu.Lock()
+	defer a.flowMu.Unlock()
+
+	if flow := a.flows[id]; flow != nil {
+		return flow, nil
+	}
+	conn, err := net.ListenPacket("udp", "")
+	if err != nil {
+		return nil, err
+	}
+	flow := &udpFlow{id: id, conn: conn}
+	a.flows[id] = flow
+	go a.readLoop(flow)
+	return flow, nil
+}
+
+func (a *Association) closeFlow(id uint64) {
+	a.flowMu.Lock()
+	flow := a.flows[id]
+	if flow != nil {
+		delete(a.flows, id)
+	}
+	a.flowMu.Unlock()
+	if flow != nil {
+		_ = flow.conn.Close()
+	}
+}
+
+func (a *Association) readLoop(flow *udpFlow) {
 	buf := make([]byte, MaxPayload)
 	for {
-		n, addr, err := a.conn.ReadFrom(buf)
+		n, addr, err := flow.conn.ReadFrom(buf)
 		if err != nil {
-			_ = a.readW.CloseWithError(err)
 			return
 		}
 		host, port, err := HostPortFromAddr(addr)
@@ -77,35 +131,26 @@ func (a *Association) readLoop() {
 		}
 		payload := make([]byte, n)
 		copy(payload, buf[:n])
-		if err := WritePacket(a.readW, Packet{Host: host, Port: port, Payload: payload}); err != nil {
-			_ = a.readW.CloseWithError(err)
+
+		a.readMu.Lock()
+		err = WritePacket(a.readW, Packet{AssociationID: flow.id, Host: host, Port: port, Payload: payload})
+		a.readMu.Unlock()
+		if err != nil {
 			return
 		}
 	}
 }
 
-func (a *Association) writePacket(pkt Packet) error {
-	if pkt.Port == 0 {
-		return fmt.Errorf("udp target port is zero for host %q", pkt.Host)
-	}
-	addr, err := a.resolve(pkt.Host, pkt.Port)
-	if err != nil {
-		return err
-	}
-	_, err = a.conn.WriteTo(pkt.Payload, addr)
-	return err
-}
-
-func (a *Association) resolve(host string, port uint16) (net.Addr, error) {
+func (f *udpFlow) resolve(host string, port uint16) (net.Addr, error) {
 	key := net.JoinHostPort(host, fmt.Sprintf("%d", port))
-	if value, ok := a.cache.Load(key); ok {
+	if value, ok := f.cache.Load(key); ok {
 		return value.(net.Addr), nil
 	}
 	addr, err := net.ResolveUDPAddr("udp", key)
 	if err != nil {
 		return nil, err
 	}
-	a.cache.Store(key, addr)
+	f.cache.Store(key, addr)
 	return addr, nil
 }
 

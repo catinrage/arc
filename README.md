@@ -228,7 +228,7 @@ For X-UI, point the SOCKS outbound at the gateway:
 }
 ```
 
-Xray will open UDP ASSOCIATE control connections when it needs UDP. The gateway replies with a local UDP bind address and relays those datagrams through the agent over the existing Arc mux stream.
+Xray will open UDP ASSOCIATE control connections when it needs UDP. The gateway replies with a local UDP bind address and relays those datagrams through one shared Arc UDP stream with per-association IDs, so X-UI does not burn one relay WebSocket per UDP control socket.
 
 ## GitHub Release Pipeline
 

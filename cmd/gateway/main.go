@@ -17,7 +17,6 @@ import (
 	"arc/internal/mux"
 	"arc/internal/protocol"
 	"arc/internal/socks"
-	"arc/internal/udprelay"
 	"arc/internal/wsclient"
 )
 
@@ -51,7 +50,8 @@ type gateway struct {
 
 	burstTokens chan struct{}
 
-	log *applog.Logger
+	udpRelay *udpRelayClient
+	log      *applog.Logger
 }
 
 func main() {
@@ -111,7 +111,7 @@ func newGateway(cfg config.Gateway, logger *applog.Logger) (*gateway, error) {
 		return nil, err
 	}
 
-	return &gateway{
+	gw := &gateway{
 		cfg:          cfg,
 		openTimeout:  openTimeout,
 		relayTimeout: relayTimeout,
@@ -121,7 +121,9 @@ func newGateway(cfg config.Gateway, logger *applog.Logger) (*gateway, error) {
 		slots:        make([]sessionSlot, cfg.Connections),
 		burstTokens:  make(chan struct{}, cfg.BurstConnections),
 		log:          logger,
-	}, nil
+	}
+	gw.udpRelay = newUDPRelayClient(gw)
+	return gw, nil
 }
 
 func (g *gateway) run(ctx context.Context) error {
@@ -267,115 +269,7 @@ func (g *gateway) handleConn(ctx context.Context, conn net.Conn) {
 }
 
 func (g *gateway) handleUDPAssociate(ctx context.Context, conn net.Conn, connID int64, req socks.Request) {
-	if !g.cfg.UDPEnabled {
-		_ = socks.WriteFailure(conn, 0x07)
-		g.log.Warnf("#%d UDP associate rejected because udp_enabled=false", connID)
-		return
-	}
-
-	udpConn, err := net.ListenUDP("udp", g.udpBindAddr())
-	if err != nil {
-		_ = socks.WriteFailure(conn, 0x05)
-		g.log.Warnf("#%d UDP associate bind failed: %v", connID, err)
-		return
-	}
-	defer udpConn.Close()
-
-	openCtx, cancel := context.WithTimeout(ctx, g.openTimeout)
-	stream, release, err := g.open(openCtx, protocol.OpenRequest{Host: protocol.UDPAssociateHost, Port: 1})
-	cancel()
-	if err != nil {
-		_ = socks.WriteFailure(conn, 0x05)
-		g.log.Warnf("#%d UDP associate open failed: %v", connID, err)
-		return
-	}
-	defer release()
-
-	localAddr, ok := udpConn.LocalAddr().(*net.UDPAddr)
-	if !ok {
-		_ = socks.WriteFailure(conn, 0x05)
-		g.log.Warnf("#%d UDP associate bad local addr: %v", connID, udpConn.LocalAddr())
-		return
-	}
-	replyAddr := udpReplyAddr(localAddr, conn.LocalAddr())
-	if err := socks.WriteUDPAssociateSuccess(conn, replyAddr); err != nil {
-		return
-	}
-
-	g.log.Infof("#%d UDP associate ready requested=%s:%d bind=%s reply=%s active=%d", connID, req.Host, req.Port, localAddr, replyAddr, g.active.Load())
-
-	controlDone := make(chan struct{})
-	go func() {
-		_, _ = io.Copy(io.Discard, conn)
-		close(controlDone)
-		_ = udpConn.Close()
-		_ = stream.Close()
-	}()
-
-	errCh := make(chan error, 2)
-	var clientMu sync.RWMutex
-	var clientAddr *net.UDPAddr
-
-	go func() {
-		buf := make([]byte, 65535)
-		for {
-			n, addr, err := udpConn.ReadFromUDP(buf)
-			if err != nil {
-				errCh <- err
-				return
-			}
-			dgram, err := socks.ParseUDPDatagram(buf[:n])
-			if err != nil {
-				g.log.Debugf("#%d bad SOCKS UDP datagram from %s: %v", connID, addr, err)
-				continue
-			}
-			if dgram.Port == 0 {
-				g.log.Debugf("#%d SOCKS UDP datagram has zero target port host=%s", connID, dgram.Host)
-				continue
-			}
-			clientMu.Lock()
-			clientAddr = addr
-			clientMu.Unlock()
-			if err := udprelay.WritePacket(stream, udprelay.Packet{Host: dgram.Host, Port: dgram.Port, Payload: dgram.Payload}); err != nil {
-				errCh <- err
-				return
-			}
-		}
-	}()
-
-	go func() {
-		for {
-			pkt, err := udprelay.ReadPacket(stream)
-			if err != nil {
-				errCh <- err
-				return
-			}
-			clientMu.RLock()
-			addr := clientAddr
-			clientMu.RUnlock()
-			if addr == nil {
-				continue
-			}
-			raw, err := socks.EncodeUDPDatagram(socks.UDPDatagram{Host: pkt.Host, Port: pkt.Port, Payload: pkt.Payload})
-			if err != nil {
-				g.log.Debugf("#%d bad UDP response packet: %v", connID, err)
-				continue
-			}
-			if _, err := udpConn.WriteToUDP(raw, addr); err != nil {
-				errCh <- err
-				return
-			}
-		}
-	}()
-
-	select {
-	case <-ctx.Done():
-	case <-controlDone:
-	case err := <-errCh:
-		if err != nil && !errors.Is(err, net.ErrClosed) && !errors.Is(err, io.EOF) {
-			g.log.Debugf("#%d UDP associate closed: %v", connID, err)
-		}
-	}
+	g.udpRelay.handleAssociate(ctx, conn, connID, req)
 }
 
 func (g *gateway) udpBindAddr() *net.UDPAddr {

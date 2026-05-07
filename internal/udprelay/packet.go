@@ -11,15 +11,22 @@ import (
 const (
 	MaxHostLength = 255
 	MaxPayload    = 65535
+
+	FlagClose byte = 1
 )
 
 type Packet struct {
-	Host    string
-	Port    uint16
-	Payload []byte
+	AssociationID uint64
+	Close         bool
+	Host          string
+	Port          uint16
+	Payload       []byte
 }
 
 func WritePacket(w io.Writer, pkt Packet) error {
+	if pkt.Close {
+		return writeFrame(w, pkt, nil)
+	}
 	if len(pkt.Host) == 0 {
 		return errors.New("udp packet host is empty")
 	}
@@ -30,17 +37,26 @@ func WritePacket(w io.Writer, pkt Packet) error {
 		return fmt.Errorf("udp payload too large: %d", len(pkt.Payload))
 	}
 
-	frameLen := 1 + len(pkt.Host) + 2 + 2 + len(pkt.Payload)
+	return writeFrame(w, pkt, pkt.Payload)
+}
+
+func writeFrame(w io.Writer, pkt Packet, payload []byte) error {
+	hostLen := len(pkt.Host)
+	frameLen := 8 + 1 + 1 + hostLen + 2 + 2 + len(payload)
 	frame := make([]byte, 4+frameLen)
 	binary.BigEndian.PutUint32(frame[:4], uint32(frameLen))
-	frame[4] = byte(len(pkt.Host))
-	copy(frame[5:], pkt.Host)
-	off := 5 + len(pkt.Host)
+	binary.BigEndian.PutUint64(frame[4:12], pkt.AssociationID)
+	if pkt.Close {
+		frame[12] = FlagClose
+	}
+	frame[13] = byte(hostLen)
+	copy(frame[14:], pkt.Host)
+	off := 14 + hostLen
 	binary.BigEndian.PutUint16(frame[off:off+2], pkt.Port)
 	off += 2
-	binary.BigEndian.PutUint16(frame[off:off+2], uint16(len(pkt.Payload)))
+	binary.BigEndian.PutUint16(frame[off:off+2], uint16(len(payload)))
 	off += 2
-	copy(frame[off:], pkt.Payload)
+	copy(frame[off:], payload)
 
 	_, err := w.Write(frame)
 	return err
@@ -88,19 +104,27 @@ func DecodeBuffered(buf *[]byte, emit func(Packet) error) error {
 }
 
 func DecodeFrame(frame []byte) (Packet, error) {
-	if len(frame) < 5 {
+	if len(frame) < 14 {
 		return Packet{}, fmt.Errorf("bad udp frame length: %d", len(frame))
 	}
 
-	hostLen := int(frame[0])
+	assocID := binary.BigEndian.Uint64(frame[:8])
+	flags := frame[8]
+	hostLen := int(frame[9])
+	if flags&^FlagClose != 0 {
+		return Packet{}, fmt.Errorf("bad udp packet flags: %d", flags)
+	}
+	if flags&FlagClose != 0 && hostLen == 0 && len(frame) == 14 {
+		return Packet{AssociationID: assocID, Close: true}, nil
+	}
 	if hostLen == 0 {
 		return Packet{}, errors.New("udp packet host is empty")
 	}
-	if len(frame) < 1+hostLen+4 {
+	if len(frame) < 10+hostLen+4 {
 		return Packet{}, errors.New("short udp packet frame")
 	}
 
-	off := 1
+	off := 10
 	host := string(frame[off : off+hostLen])
 	off += hostLen
 	port := binary.BigEndian.Uint16(frame[off : off+2])
@@ -113,7 +137,7 @@ func DecodeFrame(frame []byte) (Packet, error) {
 
 	payload := make([]byte, payloadLen)
 	copy(payload, frame[off:])
-	return Packet{Host: host, Port: port, Payload: payload}, nil
+	return Packet{AssociationID: assocID, Host: host, Port: port, Payload: payload}, nil
 }
 
 func HostPortFromAddr(addr net.Addr) (string, uint16, error) {
@@ -138,7 +162,7 @@ func HostPortFromAddr(addr net.Addr) (string, uint16, error) {
 }
 
 func validateFrameLength(frameLen uint32) error {
-	if frameLen < 5 || frameLen > MaxHostLength+5+MaxPayload {
+	if frameLen < 14 || frameLen > MaxHostLength+14+MaxPayload {
 		return fmt.Errorf("bad udp frame length: %d", frameLen)
 	}
 	return nil
