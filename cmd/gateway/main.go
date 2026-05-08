@@ -34,6 +34,8 @@ type sessionSlot struct {
 }
 
 type gateway struct {
+	configPath string
+
 	cfg          config.Gateway
 	openTimeout  time.Duration
 	relayTimeout time.Duration
@@ -52,6 +54,8 @@ type gateway struct {
 
 	udpRelay *udpRelayClient
 	log      *applog.Logger
+
+	requests requestTracker
 }
 
 func main() {
@@ -80,7 +84,7 @@ func main() {
 	}
 	defer logger.Close()
 
-	gw, err := newGateway(cfg, logger)
+	gw, err := newGateway(cfg, *configPath, logger)
 	if err != nil {
 		logger.Fatalf("gateway: %v", err)
 	}
@@ -89,7 +93,7 @@ func main() {
 	}
 }
 
-func newGateway(cfg config.Gateway, logger *applog.Logger) (*gateway, error) {
+func newGateway(cfg config.Gateway, configPath string, logger *applog.Logger) (*gateway, error) {
 	openTimeout, err := config.Duration(cfg.OpenTimeout)
 	if err != nil {
 		return nil, err
@@ -112,6 +116,7 @@ func newGateway(cfg config.Gateway, logger *applog.Logger) (*gateway, error) {
 	}
 
 	gw := &gateway{
+		configPath:   configPath,
 		cfg:          cfg,
 		openTimeout:  openTimeout,
 		relayTimeout: relayTimeout,
@@ -127,6 +132,10 @@ func newGateway(cfg config.Gateway, logger *applog.Logger) (*gateway, error) {
 }
 
 func (g *gateway) run(ctx context.Context) error {
+	if g.cfg.AdminListen != "" {
+		go g.runAdmin(ctx)
+	}
+
 	for i := range g.slots {
 		go g.connectLoop(ctx, i)
 		sleepContext(ctx, g.connectRamp)
@@ -247,12 +256,14 @@ func (g *gateway) handleConn(ctx context.Context, conn net.Conn) {
 		return
 	}
 
+	g.recordRequest(connID, "CONNECT", req.Host, req.Port, conn.RemoteAddr())
 	g.log.Debugf("#%d SOCKS request %s:%d active=%d", connID, req.Host, req.Port, g.active.Load())
 	openCtx, cancel := context.WithTimeout(ctx, g.openTimeout)
 	stream, release, err := g.open(openCtx, protocol.OpenRequest{Host: req.Host, Port: req.Port})
 	cancel()
 	if err != nil {
 		_ = socks.WriteFailure(conn, 0x05)
+		g.updateRequest(connID, "failed", err)
 		g.log.Warnf("#%d open %s:%d failed: %v", connID, req.Host, req.Port, err)
 		return
 	}
@@ -260,12 +271,15 @@ func (g *gateway) handleConn(ctx context.Context, conn net.Conn) {
 
 	if err := socks.WriteSuccess(conn); err != nil {
 		_ = stream.Close()
+		g.updateRequest(connID, "failed", err)
 		return
 	}
 
+	g.updateRequest(connID, "connected", nil)
 	g.log.Infof("#%d connected %s:%d active=%d", connID, req.Host, req.Port, g.active.Load())
 	go copyAndClose(stream, conn, g.cfg.BufferSize)
 	copyAndClose(conn, stream, g.cfg.BufferSize)
+	g.updateRequest(connID, "closed", nil)
 }
 
 func (g *gateway) handleUDPAssociate(ctx context.Context, conn net.Conn, connID int64, req socks.Request) {

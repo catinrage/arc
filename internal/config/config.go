@@ -27,6 +27,9 @@ type Gateway struct {
 	InsecureTLS      bool   `json:"insecure_tls"`
 	LogFile          string `json:"log_file"`
 	LogLevel         string `json:"log_level"`
+	AdminListen      string `json:"admin_listen"`
+	AdminUsername    string `json:"admin_username"`
+	AdminPassword    string `json:"admin_password"`
 }
 
 type Agent struct {
@@ -62,6 +65,7 @@ func DefaultGateway() Gateway {
 		ReconnectMax:     "5s",
 		StatsInterval:    "10s",
 		LogLevel:         "info",
+		AdminListen:      "",
 	}
 }
 
@@ -90,6 +94,21 @@ func LoadGateway(path string) (Gateway, error) {
 		return Gateway{}, err
 	}
 	return cfg, cfg.Validate()
+}
+
+func SaveGateway(path string, cfg Gateway) error {
+	if path == "" {
+		return errors.New("config path is required")
+	}
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	return os.WriteFile(path, data, 0o600)
 }
 
 func LoadAgent(path string) (Agent, error) {
@@ -138,6 +157,14 @@ func (c Gateway) Validate() error {
 	}
 	if err := validateLogLevel(c.LogLevel); err != nil {
 		return err
+	}
+	if c.AdminListen != "" {
+		if c.AdminUsername == "" {
+			return errors.New("admin_username is required when admin_listen is set")
+		}
+		if c.AdminPassword == "" {
+			return errors.New("admin_password is required when admin_listen is set")
+		}
 	}
 	return validateDurations(map[string]string{
 		"open_timeout":            c.OpenTimeout,

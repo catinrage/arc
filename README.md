@@ -112,11 +112,16 @@ Important config:
   "relay_handshake_timeout": "30s",
   "connect_ramp_interval": "500ms",
   "log_file": "arc-gateway.log",
-  "log_level": "info"
+  "log_level": "info",
+  "admin_listen": "127.0.0.1:8090",
+  "admin_username": "admin",
+  "admin_password": "change-me"
 }
 ```
 
 For maximum throughput, keep `max_streams_per_session` at `1`. `connections` are always-on lanes; `burst_connections` are temporary one-shot lanes used when all always-on lanes are busy. This avoids multiplexing head-of-line blocking while still handling browser-style connection spikes.
+
+The gateway admin panel is served from `panel/gateway/` when `admin_listen` is set. Open `http://127.0.0.1:8090` and sign in with `admin_username` / `admin_password`. The panel shows live SOCKS listener state, active relay sessions, recent SOCKS destinations, gateway config editing, and service actions.
 
 ## Agent
 
@@ -146,7 +151,7 @@ Run enough agent connections for both gateway steady lanes and burst lanes. For 
 
 ## Service Manager
 
-Release packages include `arc-agent`, `arc-gateway`, `relay.py`, config examples, and `service.sh`.
+Release packages include `arc-agent`, `arc-gateway`, `relay.py`, config examples, `panel/gateway`, and `service.sh`.
 
 Initialize and start a systemd service:
 

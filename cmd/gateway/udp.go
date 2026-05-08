@@ -43,8 +43,10 @@ func newUDPRelayClient(g *gateway) *udpRelayClient {
 }
 
 func (r *udpRelayClient) handleAssociate(ctx context.Context, conn net.Conn, connID int64, req socks.Request) {
+	r.g.recordRequest(connID, "UDP", req.Host, req.Port, conn.RemoteAddr())
 	if !r.g.cfg.UDPEnabled {
 		_ = socks.WriteFailure(conn, 0x07)
+		r.g.updateRequest(connID, "failed", errors.New("udp disabled"))
 		r.g.log.Warnf("#%d UDP associate rejected because udp_enabled=false", connID)
 		return
 	}
@@ -52,6 +54,7 @@ func (r *udpRelayClient) handleAssociate(ctx context.Context, conn net.Conn, con
 	udpConn, err := net.ListenUDP("udp", r.g.udpBindAddr())
 	if err != nil {
 		_ = socks.WriteFailure(conn, 0x05)
+		r.g.updateRequest(connID, "failed", err)
 		r.g.log.Warnf("#%d UDP associate bind failed: %v", connID, err)
 		return
 	}
@@ -60,11 +63,13 @@ func (r *udpRelayClient) handleAssociate(ctx context.Context, conn net.Conn, con
 	localAddr, ok := udpConn.LocalAddr().(*net.UDPAddr)
 	if !ok {
 		_ = socks.WriteFailure(conn, 0x05)
+		r.g.updateRequest(connID, "failed", errors.New("bad udp local addr"))
 		r.g.log.Warnf("#%d UDP associate bad local addr: %v", connID, udpConn.LocalAddr())
 		return
 	}
 	replyAddr := udpReplyAddr(localAddr, conn.LocalAddr())
 	if err := socks.WriteUDPAssociateSuccess(conn, replyAddr); err != nil {
+		r.g.updateRequest(connID, "failed", err)
 		return
 	}
 
@@ -78,6 +83,7 @@ func (r *udpRelayClient) handleAssociate(ctx context.Context, conn net.Conn, con
 	defer r.unregister(assoc.id)
 
 	r.g.log.Infof("#%d UDP associate ready id=%d requested=%s:%d bind=%s reply=%s active=%d", connID, assoc.id, req.Host, req.Port, localAddr, replyAddr, r.g.active.Load())
+	r.g.updateRequest(connID, "connected", nil)
 
 	controlDone := make(chan struct{})
 	go func() {
@@ -97,6 +103,7 @@ func (r *udpRelayClient) handleAssociate(ctx context.Context, conn net.Conn, con
 			r.g.log.Debugf("#%d UDP associate closed: %v", connID, err)
 		}
 	}
+	r.g.updateRequest(connID, "closed", nil)
 }
 
 func (a *udpAssociation) readFromClient(ctx context.Context, errCh chan<- error) {

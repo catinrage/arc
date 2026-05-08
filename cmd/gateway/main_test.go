@@ -13,7 +13,7 @@ func TestNewGateway(t *testing.T) {
 	cfg := config.DefaultGateway()
 	cfg.Connections = 2
 
-	gw, err := newGateway(cfg, nil)
+	gw, err := newGateway(cfg, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -27,7 +27,7 @@ func TestReserveSessionHonorsMaxStreams(t *testing.T) {
 	cfg.Connections = 2
 	cfg.MaxStreams = 1
 
-	gw, err := newGateway(cfg, nil)
+	gw, err := newGateway(cfg, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestReservationReleaseDoesNotAffectReconnectedSlot(t *testing.T) {
 	cfg.Connections = 1
 	cfg.MaxStreams = 1
 
-	gw, err := newGateway(cfg, nil)
+	gw, err := newGateway(cfg, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +101,7 @@ func TestGrowBackoff(t *testing.T) {
 func TestUDPBindAddrUsesListenHost(t *testing.T) {
 	cfg := config.DefaultGateway()
 	cfg.ListenHost = "127.0.0.1"
-	gw, err := newGateway(cfg, nil)
+	gw, err := newGateway(cfg, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

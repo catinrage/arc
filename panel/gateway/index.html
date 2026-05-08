@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Arc Gateway</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">A</div>
+          <div>
+            <div class="brand-name">Arc Gateway</div>
+            <div class="brand-subtitle">Tunnel Control</div>
+          </div>
+        </div>
+        <nav class="nav">
+          <a href="#overview" class="nav-link active">Overview</a>
+          <a href="#traffic" class="nav-link">Traffic</a>
+          <a href="#config" class="nav-link">Config</a>
+          <a href="#service" class="nav-link">Service</a>
+        </nav>
+        <div class="sidebar-status">
+          <span class="pulse"></span>
+          <span id="sidebarStatus">Connecting</span>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div>
+            <h1>Gateway Console</h1>
+            <p id="buildInfo">Loading runtime state</p>
+          </div>
+          <div class="top-actions">
+            <button class="icon-button" id="refreshButton" title="Refresh state">Refresh</button>
+            <button class="primary-button" id="saveButton" form="configForm">Save config</button>
+          </div>
+        </header>
+
+        <section class="section" id="overview">
+          <div class="metric-grid">
+            <article class="metric-card">
+              <div class="metric-label">SOCKS Listener</div>
+              <div class="metric-value" id="socksAddress">-</div>
+              <div class="metric-foot" id="socksState">Unknown</div>
+            </article>
+            <article class="metric-card">
+              <div class="metric-label">Active SOCKS</div>
+              <div class="metric-value" id="activeSocks">0</div>
+              <div class="metric-foot"><span id="totalSocks">0</span> total accepted</div>
+            </article>
+            <article class="metric-card">
+              <div class="metric-label">Relay Sessions</div>
+              <div class="metric-value"><span id="readySessions">0</span>/<span id="configSessions">0</span></div>
+              <div class="metric-foot"><span id="activeStreams">0</span> active streams</div>
+            </article>
+            <article class="metric-card">
+              <div class="metric-label">Burst Lanes</div>
+              <div class="metric-value"><span id="burstActive">0</span>/<span id="burstConfigured">0</span></div>
+              <div class="metric-foot">Max streams/session <span id="maxStreams">1</span></div>
+            </article>
+          </div>
+        </section>
+
+        <section class="section split" id="traffic">
+          <article class="panel traffic-panel">
+            <div class="panel-head">
+              <div>
+                <h2>SOCKS Requests</h2>
+                <p>Recent destinations opened through this gateway</p>
+              </div>
+              <span class="chip" id="requestCount">0 rows</span>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Mode</th>
+                    <th>Website</th>
+                    <th>Port</th>
+                    <th>Status</th>
+                    <th>Age</th>
+                  </tr>
+                </thead>
+                <tbody id="requestTable">
+                  <tr><td colspan="6" class="empty">Waiting for requests</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </article>
+
+          <article class="panel service-panel" id="service">
+            <div class="panel-head">
+              <div>
+                <h2>Service</h2>
+                <p>Manage the gateway system service</p>
+              </div>
+            </div>
+            <div class="service-actions">
+              <button data-action="status">Status</button>
+              <button data-action="start">Start</button>
+              <button data-action="restart" class="warning">Restart</button>
+              <button data-action="stop" class="danger">Stop</button>
+            </div>
+            <pre id="serviceOutput" class="service-output">No service action yet.</pre>
+          </article>
+        </section>
+
+        <section class="section" id="config">
+          <article class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Gateway Config</h2>
+                <p id="configPath">Config path unavailable</p>
+              </div>
+              <span class="chip restart-chip">Restart required after save</span>
+            </div>
+
+            <form id="configForm" class="config-form">
+              <div class="form-grid">
+                <label>
+                  <span>Relay URL</span>
+                  <input name="relay_url" type="url" placeholder="wss://relay.example.com/client-v2" required>
+                </label>
+                <label>
+                  <span>SOCKS Listen Host</span>
+                  <input name="listen_host" placeholder="127.0.0.1" required>
+                </label>
+                <label>
+                  <span>SOCKS Listen Port</span>
+                  <input name="listen_port" type="number" min="1" max="65535" required>
+                </label>
+                <label>
+                  <span>Connections</span>
+                  <input name="connections" type="number" min="1" required>
+                </label>
+                <label>
+                  <span>Burst Connections</span>
+                  <input name="burst_connections" type="number" min="0" required>
+                </label>
+                <label>
+                  <span>Max Streams Per Session</span>
+                  <input name="max_streams_per_session" type="number" min="1" required>
+                </label>
+                <label>
+                  <span>Buffer Size</span>
+                  <input name="buffer_size" type="number" min="1024" required>
+                </label>
+                <label>
+                  <span>Open Timeout</span>
+                  <input name="open_timeout" placeholder="10s" required>
+                </label>
+                <label>
+                  <span>Relay Handshake Timeout</span>
+                  <input name="relay_handshake_timeout" placeholder="30s" required>
+                </label>
+                <label>
+                  <span>Connect Ramp Interval</span>
+                  <input name="connect_ramp_interval" placeholder="500ms" required>
+                </label>
+                <label>
+                  <span>Reconnect Initial</span>
+                  <input name="reconnect_initial" placeholder="250ms" required>
+                </label>
+                <label>
+                  <span>Reconnect Max</span>
+                  <input name="reconnect_max" placeholder="5s" required>
+                </label>
+                <label>
+                  <span>Stats Interval</span>
+                  <input name="stats_interval" placeholder="10s" required>
+                </label>
+                <label>
+                  <span>Log File</span>
+                  <input name="log_file" placeholder="arc-gateway.log">
+                </label>
+                <label>
+                  <span>Log Level</span>
+                  <select name="log_level">
+                    <option value="debug">debug</option>
+                    <option value="info">info</option>
+                    <option value="warn">warn</option>
+                    <option value="error">error</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Admin Listen Address</span>
+                  <input name="admin_listen" placeholder="127.0.0.1:8090">
+                </label>
+                <label>
+                  <span>Admin Username</span>
+                  <input name="admin_username" autocomplete="username">
+                </label>
+                <label>
+                  <span>Admin Password</span>
+                  <input name="admin_password" type="password" autocomplete="new-password" placeholder="Leave blank to keep current">
+                </label>
+              </div>
+
+              <div class="toggle-row">
+                <label class="toggle">
+                  <input name="udp_enabled" type="checkbox">
+                  <span>UDP enabled</span>
+                </label>
+                <label class="toggle">
+                  <input name="insecure_tls" type="checkbox">
+                  <span>Insecure TLS</span>
+                </label>
+              </div>
+            </form>
+          </article>
+        </section>
+      </main>
+    </div>
+
+    <div id="toast" class="toast" hidden></div>
+    <script src="/app.js"></script>
+  </body>
+</html>

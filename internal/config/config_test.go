@@ -65,3 +65,34 @@ func TestGatewayRejectsBadMaxStreams(t *testing.T) {
 		t.Fatal("expected max streams error")
 	}
 }
+
+func TestGatewayAdminRequiresCredentials(t *testing.T) {
+	cfg := DefaultGateway()
+	cfg.AdminListen = "127.0.0.1:8090"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected missing admin credentials error")
+	}
+	cfg.AdminUsername = "admin"
+	cfg.AdminPassword = "secret"
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSaveGateway(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "gateway.json")
+	cfg := DefaultGateway()
+	cfg.AdminListen = "127.0.0.1:8090"
+	cfg.AdminUsername = "admin"
+	cfg.AdminPassword = "secret"
+	if err := SaveGateway(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadGateway(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.AdminListen != cfg.AdminListen || loaded.AdminUsername != "admin" {
+		t.Fatalf("unexpected saved config: %#v", loaded)
+	}
+}

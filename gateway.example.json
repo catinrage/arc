@@ -15,5 +15,8 @@
   "stats_interval": "10s",
   "insecure_tls": false,
   "log_file": "arc-gateway.log",
-  "log_level": "info"
+  "log_level": "info",
+  "admin_listen": "127.0.0.1:8090",
+  "admin_username": "admin",
+  "admin_password": "change-me"
 }
