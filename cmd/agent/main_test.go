@@ -22,6 +22,22 @@ func TestNewAgent(t *testing.T) {
 	}
 }
 
+func TestAgentRelayURLDistribution(t *testing.T) {
+	cfg := config.DefaultAgent()
+	cfg.RelayURLs = []string{"wss://r1/agent-raw", "wss://r2/agent-raw"}
+	cfg.Connections = 4
+
+	a, err := newAgent(cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for idx, want := range []string{"wss://r1/agent-raw", "wss://r2/agent-raw", "wss://r1/agent-raw", "wss://r2/agent-raw"} {
+		if got := a.relayURLForSlot(idx); got != want {
+			t.Fatalf("slot %d got %q want %q", idx, got, want)
+		}
+	}
+}
+
 func TestFormatPort(t *testing.T) {
 	if got := formatPort(443); got != "443" {
 		t.Fatalf("got %q", got)

@@ -1,5 +1,6 @@
 {
   "relay_url": "wss://ciyn-4f0b00602d-rain.apps.ir-central1.arvancaas.ir/agent-v2",
+  "relay_urls": [],
   "transport": "mux",
   "connections": 128,
   "buffer_size": 65536,

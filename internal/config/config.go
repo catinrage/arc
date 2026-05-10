@@ -10,44 +10,46 @@ import (
 )
 
 type Gateway struct {
-	RelayURL         string `json:"relay_url"`
-	Transport        string `json:"transport"`
-	ListenHost       string `json:"listen_host"`
-	ListenPort       int    `json:"listen_port"`
-	Connections      int    `json:"connections"`
-	BurstConnections int    `json:"burst_connections"`
-	MaxStreams       int    `json:"max_streams_per_session"`
-	BufferSize       int    `json:"buffer_size"`
-	UDPEnabled       bool   `json:"udp_enabled"`
-	OpenTimeout      string `json:"open_timeout"`
-	RelayHandshake   string `json:"relay_handshake_timeout"`
-	ConnectRamp      string `json:"connect_ramp_interval"`
-	ReconnectInitial string `json:"reconnect_initial"`
-	ReconnectMax     string `json:"reconnect_max"`
-	StatsInterval    string `json:"stats_interval"`
-	InsecureTLS      bool   `json:"insecure_tls"`
-	LogFile          string `json:"log_file"`
-	LogLevel         string `json:"log_level"`
-	AdminListen      string `json:"admin_listen"`
-	AdminUsername    string `json:"admin_username"`
-	AdminPassword    string `json:"admin_password"`
+	RelayURL         string   `json:"relay_url"`
+	RelayURLs        []string `json:"relay_urls,omitempty"`
+	Transport        string   `json:"transport"`
+	ListenHost       string   `json:"listen_host"`
+	ListenPort       int      `json:"listen_port"`
+	Connections      int      `json:"connections"`
+	BurstConnections int      `json:"burst_connections"`
+	MaxStreams       int      `json:"max_streams_per_session"`
+	BufferSize       int      `json:"buffer_size"`
+	UDPEnabled       bool     `json:"udp_enabled"`
+	OpenTimeout      string   `json:"open_timeout"`
+	RelayHandshake   string   `json:"relay_handshake_timeout"`
+	ConnectRamp      string   `json:"connect_ramp_interval"`
+	ReconnectInitial string   `json:"reconnect_initial"`
+	ReconnectMax     string   `json:"reconnect_max"`
+	StatsInterval    string   `json:"stats_interval"`
+	InsecureTLS      bool     `json:"insecure_tls"`
+	LogFile          string   `json:"log_file"`
+	LogLevel         string   `json:"log_level"`
+	AdminListen      string   `json:"admin_listen"`
+	AdminUsername    string   `json:"admin_username"`
+	AdminPassword    string   `json:"admin_password"`
 }
 
 type Agent struct {
-	RelayURL             string `json:"relay_url"`
-	Transport            string `json:"transport"`
-	Connections          int    `json:"connections"`
-	BufferSize           int    `json:"buffer_size"`
-	UDPEnabled           bool   `json:"udp_enabled"`
-	TargetConnectTimeout string `json:"target_connect_timeout"`
-	RelayHandshake       string `json:"relay_handshake_timeout"`
-	ConnectRamp          string `json:"connect_ramp_interval"`
-	ReconnectInitial     string `json:"reconnect_initial"`
-	ReconnectMax         string `json:"reconnect_max"`
-	StatsInterval        string `json:"stats_interval"`
-	InsecureTLS          bool   `json:"insecure_tls"`
-	LogFile              string `json:"log_file"`
-	LogLevel             string `json:"log_level"`
+	RelayURL             string   `json:"relay_url"`
+	RelayURLs            []string `json:"relay_urls,omitempty"`
+	Transport            string   `json:"transport"`
+	Connections          int      `json:"connections"`
+	BufferSize           int      `json:"buffer_size"`
+	UDPEnabled           bool     `json:"udp_enabled"`
+	TargetConnectTimeout string   `json:"target_connect_timeout"`
+	RelayHandshake       string   `json:"relay_handshake_timeout"`
+	ConnectRamp          string   `json:"connect_ramp_interval"`
+	ReconnectInitial     string   `json:"reconnect_initial"`
+	ReconnectMax         string   `json:"reconnect_max"`
+	StatsInterval        string   `json:"stats_interval"`
+	InsecureTLS          bool     `json:"insecure_tls"`
+	LogFile              string   `json:"log_file"`
+	LogLevel             string   `json:"log_level"`
 }
 
 func DefaultGateway() Gateway {
@@ -138,8 +140,8 @@ func loadJSON(path string, dst any) error {
 }
 
 func (c Gateway) Validate() error {
-	if c.RelayURL == "" {
-		return errors.New("relay_url is required")
+	if err := validateRelayURLs(c.RelayURL, c.RelayURLs); err != nil {
+		return err
 	}
 	if err := validateTransport(c.Transport); err != nil {
 		return err
@@ -184,8 +186,8 @@ func (c Gateway) Validate() error {
 }
 
 func (c Agent) Validate() error {
-	if c.RelayURL == "" {
-		return errors.New("relay_url is required")
+	if err := validateRelayURLs(c.RelayURL, c.RelayURLs); err != nil {
+		return err
 	}
 	if err := validateTransport(c.Transport); err != nil {
 		return err
@@ -207,6 +209,40 @@ func (c Agent) Validate() error {
 		"reconnect_max":           c.ReconnectMax,
 		"stats_interval":          c.StatsInterval,
 	})
+}
+
+func (c Gateway) EffectiveRelayURLs() []string {
+	return effectiveRelayURLs(c.RelayURL, c.RelayURLs)
+}
+
+func (c Agent) EffectiveRelayURLs() []string {
+	return effectiveRelayURLs(c.RelayURL, c.RelayURLs)
+}
+
+func validateRelayURLs(single string, many []string) error {
+	if strings.TrimSpace(single) == "" && len(many) == 0 {
+		return errors.New("relay_url or relay_urls is required")
+	}
+	for idx, value := range many {
+		if strings.TrimSpace(value) == "" {
+			return fmt.Errorf("relay_urls[%d] is empty", idx)
+		}
+	}
+	return nil
+}
+
+func effectiveRelayURLs(single string, many []string) []string {
+	if len(many) > 0 {
+		out := make([]string, 0, len(many))
+		for _, value := range many {
+			value = strings.TrimSpace(value)
+			if value != "" {
+				out = append(out, value)
+			}
+		}
+		return out
+	}
+	return []string{strings.TrimSpace(single)}
 }
 
 func validateTransport(value string) error {

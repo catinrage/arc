@@ -41,6 +41,32 @@ func TestLoadGatewayJSONOverridesDefaults(t *testing.T) {
 	}
 }
 
+func TestGatewayRelayURLsOverrideSingleRelayURL(t *testing.T) {
+	cfg := DefaultGateway()
+	cfg.RelayURLs = []string{"wss://r1/client-raw", "wss://r2/client-raw"}
+	got := cfg.EffectiveRelayURLs()
+	if len(got) != 2 || got[0] != "wss://r1/client-raw" || got[1] != "wss://r2/client-raw" {
+		t.Fatalf("unexpected relay urls: %#v", got)
+	}
+}
+
+func TestGatewayAcceptsRelayURLsWithoutSingleRelayURL(t *testing.T) {
+	cfg := DefaultGateway()
+	cfg.RelayURL = ""
+	cfg.RelayURLs = []string{"wss://r1/client-raw"}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestGatewayRejectsEmptyRelayURLsEntry(t *testing.T) {
+	cfg := DefaultGateway()
+	cfg.RelayURLs = []string{"wss://r1/client-raw", ""}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected relay_urls error")
+	}
+}
+
 func TestLoadAgentRejectsBadDuration(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "agent.json")
 	err := os.WriteFile(path, []byte(`{"target_connect_timeout":"nope"}`), 0o600)

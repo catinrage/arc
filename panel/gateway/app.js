@@ -123,6 +123,8 @@ function fillConfigForm(cfg) {
     if (!input) continue;
     if (input.type === "checkbox") {
       input.checked = Boolean(value);
+    } else if (key === "relay_urls" && Array.isArray(value)) {
+      input.value = value.join("\n");
     } else if (key === "admin_password") {
       input.value = "";
     } else {
@@ -146,6 +148,11 @@ function readConfigForm() {
     if (!element.name) continue;
     if (boolFields.has(element.name)) {
       cfg[element.name] = element.checked;
+    } else if (element.name === "relay_urls") {
+      cfg[element.name] = element.value
+        .split(/[\n,]+/)
+        .map((item) => item.trim())
+        .filter(Boolean);
     } else if (intFields.has(element.name)) {
       cfg[element.name] = Number(element.value);
     } else {

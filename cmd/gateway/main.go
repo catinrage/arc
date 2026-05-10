@@ -45,9 +45,11 @@ type gateway struct {
 	connectRamp  time.Duration
 	reconnectMin time.Duration
 	reconnectMax time.Duration
+	relayURLs    []string
 
-	slots []sessionSlot
-	next  atomic.Uint64
+	slots     []sessionSlot
+	next      atomic.Uint64
+	relayNext atomic.Uint64
 
 	active atomic.Int64
 	total  atomic.Int64
@@ -126,6 +128,7 @@ func newGateway(cfg config.Gateway, configPath string, logger *applog.Logger) (*
 		connectRamp:  connectRamp,
 		reconnectMin: reconnectMin,
 		reconnectMax: reconnectMax,
+		relayURLs:    cfg.EffectiveRelayURLs(),
 		slots:        make([]sessionSlot, cfg.Connections),
 		burstTokens:  make(chan struct{}, cfg.BurstConnections),
 		log:          logger,
@@ -159,7 +162,7 @@ func (g *gateway) run(ctx context.Context) error {
 	}
 	defer listener.Close()
 
-	g.log.Infof("gateway SOCKS5 listening on %s, relay=%s, transport=%s sessions=%d burst=%d max_streams_per_session=%d log_file=%q log_level=%s", addr, g.cfg.RelayURL, g.transport(), g.cfg.Connections, g.cfg.BurstConnections, g.cfg.MaxStreams, g.cfg.LogFile, g.cfg.LogLevel)
+	g.log.Infof("gateway SOCKS5 listening on %s, relays=%d transport=%s sessions=%d burst=%d max_streams_per_session=%d log_file=%q log_level=%s", addr, len(g.relayURLs), g.transport(), g.cfg.Connections, g.cfg.BurstConnections, g.cfg.MaxStreams, g.cfg.LogFile, g.cfg.LogLevel)
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -171,6 +174,24 @@ func (g *gateway) run(ctx context.Context) error {
 		}
 		go g.handleConn(ctx, conn)
 	}
+}
+
+func (g *gateway) relayURLForSlot(idx int) string {
+	if len(g.relayURLs) == 0 {
+		return g.cfg.RelayURL
+	}
+	if idx < 0 {
+		idx = -idx
+	}
+	return g.relayURLs[idx%len(g.relayURLs)]
+}
+
+func (g *gateway) nextRelayURL() string {
+	if len(g.relayURLs) == 0 {
+		return g.cfg.RelayURL
+	}
+	idx := int(g.relayNext.Add(1) - 1)
+	return g.relayURLs[idx%len(g.relayURLs)]
 }
 
 func (g *gateway) transport() string {
@@ -194,7 +215,8 @@ func (g *gateway) connectLoop(ctx context.Context, idx int) {
 		}
 
 		dialCtx, cancel := context.WithTimeout(ctx, g.relayTimeout)
-		wire, err := wsclient.Dial(dialCtx, g.cfg.RelayURL, wsclient.DialOptions{
+		relayURL := g.relayURLForSlot(idx)
+		wire, err := wsclient.Dial(dialCtx, relayURL, wsclient.DialOptions{
 			HandshakeTimeout: g.relayTimeout,
 			InsecureTLS:      g.cfg.InsecureTLS,
 			Logger:           g.log,
@@ -202,7 +224,7 @@ func (g *gateway) connectLoop(ctx context.Context, idx int) {
 		})
 		if err != nil {
 			cancel()
-			g.log.Warnf("session %d relay connect failed: %v", idx, err)
+			g.log.Warnf("session %d relay connect failed url=%s: %v", idx, relayURL, err)
 			sleepContext(ctx, backoff)
 			backoff = growBackoff(backoff, g.reconnectMax)
 			continue
@@ -211,7 +233,7 @@ func (g *gateway) connectLoop(ctx context.Context, idx int) {
 		if err := waitReady(dialCtx, wire); err != nil {
 			cancel()
 			_ = wire.Close()
-			g.log.Warnf("session %d relay pair failed: %v", idx, err)
+			g.log.Warnf("session %d relay pair failed url=%s: %v", idx, relayURL, err)
 			sleepContext(ctx, backoff)
 			backoff = growBackoff(backoff, g.reconnectMax)
 			continue
@@ -220,7 +242,7 @@ func (g *gateway) connectLoop(ctx context.Context, idx int) {
 
 		session := mux.NewSessionWithLogger(wire, nil, g.cfg.BufferSize, g.log)
 		g.setSession(idx, session)
-		g.log.Infof("session %d connected and paired", idx)
+		g.log.Infof("session %d connected and paired url=%s", idx, relayURL)
 		backoff = g.reconnectMin
 
 		err = session.Serve(ctx)
@@ -243,7 +265,8 @@ func (g *gateway) connectRawLoop(ctx context.Context, idx int) {
 		}
 
 		dialCtx, cancel := context.WithTimeout(ctx, g.relayTimeout)
-		wire, err := wsclient.Dial(dialCtx, g.cfg.RelayURL, wsclient.DialOptions{
+		relayURL := g.relayURLForSlot(idx)
+		wire, err := wsclient.Dial(dialCtx, relayURL, wsclient.DialOptions{
 			HandshakeTimeout: g.relayTimeout,
 			InsecureTLS:      g.cfg.InsecureTLS,
 			Logger:           g.log,
@@ -251,7 +274,7 @@ func (g *gateway) connectRawLoop(ctx context.Context, idx int) {
 		})
 		if err != nil {
 			cancel()
-			g.log.Warnf("raw lane %d relay connect failed: %v", idx, err)
+			g.log.Warnf("raw lane %d relay connect failed url=%s: %v", idx, relayURL, err)
 			sleepContext(ctx, backoff)
 			backoff = growBackoff(backoff, g.reconnectMax)
 			continue
@@ -260,7 +283,7 @@ func (g *gateway) connectRawLoop(ctx context.Context, idx int) {
 		if err := waitReady(dialCtx, wire); err != nil {
 			cancel()
 			_ = wire.Close()
-			g.log.Warnf("raw lane %d relay pair failed: %v", idx, err)
+			g.log.Warnf("raw lane %d relay pair failed url=%s: %v", idx, relayURL, err)
 			sleepContext(ctx, backoff)
 			backoff = growBackoff(backoff, g.reconnectMax)
 			continue
@@ -269,7 +292,7 @@ func (g *gateway) connectRawLoop(ctx context.Context, idx int) {
 
 		lane := rawlane.NewPumpedWire(wire, 64)
 		g.setRawLane(idx, lane)
-		g.log.Infof("raw lane %d connected and paired", idx)
+		g.log.Infof("raw lane %d connected and paired url=%s", idx, relayURL)
 		backoff = g.reconnectMin
 
 		select {
@@ -493,7 +516,8 @@ func (g *gateway) openBurst(ctx context.Context, req protocol.OpenRequest) (*mux
 	}
 	g.burst.Add(1)
 
-	wire, err := wsclient.Dial(ctx, g.cfg.RelayURL, wsclient.DialOptions{
+	relayURL := g.nextRelayURL()
+	wire, err := wsclient.Dial(ctx, relayURL, wsclient.DialOptions{
 		HandshakeTimeout: g.relayTimeout,
 		InsecureTLS:      g.cfg.InsecureTLS,
 		Logger:           g.log,
@@ -558,7 +582,8 @@ func (g *gateway) openRawBurst(ctx context.Context, req protocol.OpenRequest) (i
 	}
 	g.burst.Add(1)
 
-	wire, err := wsclient.Dial(ctx, g.cfg.RelayURL, wsclient.DialOptions{
+	relayURL := g.nextRelayURL()
+	wire, err := wsclient.Dial(ctx, relayURL, wsclient.DialOptions{
 		HandshakeTimeout: g.relayTimeout,
 		InsecureTLS:      g.cfg.InsecureTLS,
 		Logger:           g.log,

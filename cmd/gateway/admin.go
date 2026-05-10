@@ -56,15 +56,16 @@ type socksState struct {
 }
 
 type relayState struct {
-	URL             string `json:"url"`
-	Transport       string `json:"transport"`
-	ReadySessions   int    `json:"ready_sessions"`
-	ConfigSessions  int    `json:"config_sessions"`
-	ActiveStreams   int64  `json:"active_streams"`
-	BurstActive     int64  `json:"burst_active"`
-	BurstConfigured int    `json:"burst_configured"`
-	MaxStreams      int    `json:"max_streams_per_session"`
-	UDPEnabled      bool   `json:"udp_enabled"`
+	URL             string   `json:"url"`
+	URLs            []string `json:"urls"`
+	Transport       string   `json:"transport"`
+	ReadySessions   int      `json:"ready_sessions"`
+	ConfigSessions  int      `json:"config_sessions"`
+	ActiveStreams   int64    `json:"active_streams"`
+	BurstActive     int64    `json:"burst_active"`
+	BurstConfigured int      `json:"burst_configured"`
+	MaxStreams      int      `json:"max_streams_per_session"`
+	UDPEnabled      bool     `json:"udp_enabled"`
 }
 
 type configResponse struct {
@@ -244,6 +245,7 @@ func (g *gateway) adminState() adminState {
 		},
 		Relay: relayState{
 			URL:             g.cfg.RelayURL,
+			URLs:            append([]string(nil), g.relayURLs...),
 			Transport:       g.transport(),
 			ReadySessions:   ready,
 			ConfigSessions:  len(g.slots),

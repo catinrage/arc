@@ -34,6 +34,7 @@ type agent struct {
 	connectRamp          time.Duration
 	reconnectMin         time.Duration
 	reconnectMax         time.Duration
+	relayURLs            []string
 
 	ready  atomic.Int64
 	active atomic.Int64
@@ -104,12 +105,13 @@ func newAgent(cfg config.Agent, logger *applog.Logger) (*agent, error) {
 		connectRamp:          connectRamp,
 		reconnectMin:         reconnectMin,
 		reconnectMax:         reconnectMax,
+		relayURLs:            cfg.EffectiveRelayURLs(),
 		log:                  logger,
 	}, nil
 }
 
 func (a *agent) run(ctx context.Context) {
-	a.log.Infof("agent connecting relay=%s transport=%s sessions=%d log_file=%q log_level=%s", a.cfg.RelayURL, a.transport(), a.cfg.Connections, a.cfg.LogFile, a.cfg.LogLevel)
+	a.log.Infof("agent connecting relays=%d transport=%s sessions=%d log_file=%q log_level=%s", len(a.relayURLs), a.transport(), a.cfg.Connections, a.cfg.LogFile, a.cfg.LogLevel)
 	for i := 0; i < a.cfg.Connections; i++ {
 		if a.rawTransport() {
 			go a.connectRawLoop(ctx, i)
@@ -119,6 +121,16 @@ func (a *agent) run(ctx context.Context) {
 		sleepContext(ctx, a.connectRamp)
 	}
 	a.statsLoop(ctx)
+}
+
+func (a *agent) relayURLForSlot(idx int) string {
+	if len(a.relayURLs) == 0 {
+		return a.cfg.RelayURL
+	}
+	if idx < 0 {
+		idx = -idx
+	}
+	return a.relayURLs[idx%len(a.relayURLs)]
 }
 
 func (a *agent) transport() string {
@@ -142,7 +154,8 @@ func (a *agent) connectLoop(ctx context.Context, idx int) {
 		}
 
 		dialCtx, cancel := context.WithTimeout(ctx, a.relayTimeout)
-		wire, err := wsclient.Dial(dialCtx, a.cfg.RelayURL, wsclient.DialOptions{
+		relayURL := a.relayURLForSlot(idx)
+		wire, err := wsclient.Dial(dialCtx, relayURL, wsclient.DialOptions{
 			HandshakeTimeout: a.relayTimeout,
 			InsecureTLS:      a.cfg.InsecureTLS,
 			Logger:           a.log,
@@ -150,7 +163,7 @@ func (a *agent) connectLoop(ctx context.Context, idx int) {
 		})
 		cancel()
 		if err != nil {
-			a.log.Warnf("session %d relay connect failed: %v", idx, err)
+			a.log.Warnf("session %d relay connect failed url=%s: %v", idx, relayURL, err)
 			sleepContext(ctx, backoff)
 			backoff = growBackoff(backoff, a.reconnectMax)
 			continue
@@ -158,7 +171,7 @@ func (a *agent) connectLoop(ctx context.Context, idx int) {
 
 		if err := sendReady(wire); err != nil {
 			_ = wire.Close()
-			a.log.Warnf("session %d ready send failed: %v", idx, err)
+			a.log.Warnf("session %d ready send failed url=%s: %v", idx, relayURL, err)
 			sleepContext(ctx, backoff)
 			backoff = growBackoff(backoff, a.reconnectMax)
 			continue
@@ -166,7 +179,7 @@ func (a *agent) connectLoop(ctx context.Context, idx int) {
 
 		session := mux.NewSessionWithLogger(wire, a.dialTarget, a.cfg.BufferSize, a.log)
 		a.ready.Add(1)
-		a.log.Infof("session %d ready", idx)
+		a.log.Infof("session %d ready url=%s", idx, relayURL)
 		backoff = a.reconnectMin
 
 		err = session.Serve(ctx)
@@ -189,7 +202,8 @@ func (a *agent) connectRawLoop(ctx context.Context, idx int) {
 		}
 
 		dialCtx, cancel := context.WithTimeout(ctx, a.relayTimeout)
-		wire, err := wsclient.Dial(dialCtx, a.cfg.RelayURL, wsclient.DialOptions{
+		relayURL := a.relayURLForSlot(idx)
+		wire, err := wsclient.Dial(dialCtx, relayURL, wsclient.DialOptions{
 			HandshakeTimeout: a.relayTimeout,
 			InsecureTLS:      a.cfg.InsecureTLS,
 			Logger:           a.log,
@@ -197,7 +211,7 @@ func (a *agent) connectRawLoop(ctx context.Context, idx int) {
 		})
 		cancel()
 		if err != nil {
-			a.log.Warnf("raw lane %d relay connect failed: %v", idx, err)
+			a.log.Warnf("raw lane %d relay connect failed url=%s: %v", idx, relayURL, err)
 			sleepContext(ctx, backoff)
 			backoff = growBackoff(backoff, a.reconnectMax)
 			continue
@@ -205,14 +219,14 @@ func (a *agent) connectRawLoop(ctx context.Context, idx int) {
 
 		if err := sendReady(wire); err != nil {
 			_ = wire.Close()
-			a.log.Warnf("raw lane %d ready send failed: %v", idx, err)
+			a.log.Warnf("raw lane %d ready send failed url=%s: %v", idx, relayURL, err)
 			sleepContext(ctx, backoff)
 			backoff = growBackoff(backoff, a.reconnectMax)
 			continue
 		}
 
 		a.ready.Add(1)
-		a.log.Infof("raw lane %d ready", idx)
+		a.log.Infof("raw lane %d ready url=%s", idx, relayURL)
 		backoff = a.reconnectMin
 
 		err = rawlane.Serve(ctx, wire, a.dialTarget, a.cfg.BufferSize)

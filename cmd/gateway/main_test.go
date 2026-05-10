@@ -26,6 +26,35 @@ func TestNewGateway(t *testing.T) {
 	}
 }
 
+func TestGatewayRelayURLDistribution(t *testing.T) {
+	cfg := config.DefaultGateway()
+	cfg.RelayURLs = []string{"wss://r1/client-raw", "wss://r2/client-raw", "wss://r3/client-raw"}
+	cfg.Connections = 6
+
+	gw, err := newGateway(cfg, "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for idx, want := range []string{
+		"wss://r1/client-raw",
+		"wss://r2/client-raw",
+		"wss://r3/client-raw",
+		"wss://r1/client-raw",
+		"wss://r2/client-raw",
+		"wss://r3/client-raw",
+	} {
+		if got := gw.relayURLForSlot(idx); got != want {
+			t.Fatalf("slot %d got %q want %q", idx, got, want)
+		}
+	}
+	if got := gw.nextRelayURL(); got != "wss://r1/client-raw" {
+		t.Fatalf("first burst relay got %q", got)
+	}
+	if got := gw.nextRelayURL(); got != "wss://r2/client-raw" {
+		t.Fatalf("second burst relay got %q", got)
+	}
+}
+
 func TestReserveSessionHonorsMaxStreams(t *testing.T) {
 	cfg := config.DefaultGateway()
 	cfg.Connections = 2

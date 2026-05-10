@@ -36,7 +36,8 @@ body {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -402,7 +403,8 @@ label span {
 }
 
 input,
-select {
+select,
+textarea {
   width: 100%;
   min-height: 42px;
   border: 1px solid var(--line);
@@ -414,9 +416,15 @@ select {
 }
 
 input:focus,
-select:focus {
+select:focus,
+textarea:focus {
   border-color: rgba(94, 234, 212, 0.58);
   box-shadow: 0 0 0 3px rgba(65, 214, 195, 0.12);
+}
+
+textarea {
+  resize: vertical;
+  line-height: 1.45;
 }
 
 .toggle-row {

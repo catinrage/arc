@@ -126,6 +126,7 @@ Important config:
 ```json
 {
   "relay_url": "wss://your-relay.example.com/client-v2",
+  "relay_urls": [],
   "transport": "mux",
   "listen_host": "127.0.0.1",
   "listen_port": 1080,
@@ -159,6 +160,24 @@ For the raw lane transport, use `/client-raw` and `transport: "raw"` on the gate
 }
 ```
 
+To spread gateway lanes across multiple relay containers, set `relay_urls`. When this array is non-empty it overrides `relay_url`; steady lanes are assigned by lane index and burst lanes round-robin through the list:
+
+```json
+{
+  "relay_urls": [
+    "wss://relay-1.example.com/client-raw",
+    "wss://relay-2.example.com/client-raw",
+    "wss://relay-3.example.com/client-raw",
+    "wss://relay-4.example.com/client-raw",
+    "wss://relay-5.example.com/client-raw",
+    "wss://relay-6.example.com/client-raw"
+  ],
+  "transport": "raw",
+  "connections": 96,
+  "burst_connections": 24
+}
+```
+
 The gateway admin panel is served from `panel/gateway/` when `admin_listen` is set. Open `http://127.0.0.1:8090` and sign in with `admin_username` / `admin_password`. The panel shows live SOCKS listener state, active relay sessions, recent SOCKS destinations, gateway config editing, and service actions.
 
 ## Agent
@@ -174,6 +193,7 @@ Important config:
 ```json
 {
   "relay_url": "wss://your-relay.example.com/agent-v2",
+  "relay_urls": [],
   "transport": "mux",
   "connections": 128,
   "buffer_size": 65536,
@@ -183,6 +203,23 @@ Important config:
   "connect_ramp_interval": "500ms",
   "log_file": "arc-agent.log",
   "log_level": "info"
+}
+```
+
+For multiple relay containers, the agent must use the matching `/agent-raw` URLs in the same pool. Agent lanes are also assigned by lane index, so they spread evenly across the relays:
+
+```json
+{
+  "relay_urls": [
+    "wss://relay-1.example.com/agent-raw",
+    "wss://relay-2.example.com/agent-raw",
+    "wss://relay-3.example.com/agent-raw",
+    "wss://relay-4.example.com/agent-raw",
+    "wss://relay-5.example.com/agent-raw",
+    "wss://relay-6.example.com/agent-raw"
+  ],
+  "transport": "raw",
+  "connections": 144
 }
 ```
 
