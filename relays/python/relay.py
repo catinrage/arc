@@ -25,6 +25,8 @@ LEGACY_AGENT_PATH = "/agent"
 LEGACY_CLIENT_PATH = "/client"
 MUX_AGENT_PATH = "/agent-v2"
 MUX_CLIENT_PATH = "/client-v2"
+RAW_AGENT_PATH = "/agent-raw"
+RAW_CLIENT_PATH = "/client-raw"
 
 active_pairs = 0
 total_pairs = 0
@@ -78,6 +80,7 @@ class AgentPool:
 pools = {
     LEGACY_AGENT_PATH: AgentPool(AGENT_QUEUE_SIZE),
     MUX_AGENT_PATH: AgentPool(AGENT_QUEUE_SIZE),
+    RAW_AGENT_PATH: AgentPool(AGENT_QUEUE_SIZE),
 }
 
 
@@ -86,6 +89,8 @@ def pool_for_client_path(path):
         return LEGACY_AGENT_PATH, pools[LEGACY_AGENT_PATH]
     if path == MUX_CLIENT_PATH:
         return MUX_AGENT_PATH, pools[MUX_AGENT_PATH]
+    if path == RAW_CLIENT_PATH:
+        return RAW_AGENT_PATH, pools[RAW_AGENT_PATH]
     return None, None
 
 
@@ -203,11 +208,12 @@ async def stats():
     while True:
         await asyncio.sleep(10)
         logging.info(
-            "stats active_pairs=%d total_pairs=%d queued_legacy=%d queued_mux=%d",
+            "stats active_pairs=%d total_pairs=%d queued_legacy=%d queued_mux=%d queued_raw=%d",
             active_pairs,
             total_pairs,
             pools[LEGACY_AGENT_PATH].qsize(),
             pools[MUX_AGENT_PATH].qsize(),
+            pools[RAW_AGENT_PATH].qsize(),
         )
 
 
@@ -215,7 +221,7 @@ async def main():
     configure_logging()
     asyncio.create_task(stats())
     logging.info(
-        "relay listening on %s:%d queue=%d ws_max_queue=%d legacy=(%s,%s) mux=(%s,%s)",
+        "relay listening on %s:%d queue=%d ws_max_queue=%d legacy=(%s,%s) mux=(%s,%s) raw=(%s,%s)",
         HOST,
         PORT,
         AGENT_QUEUE_SIZE,
@@ -224,6 +230,8 @@ async def main():
         LEGACY_CLIENT_PATH,
         MUX_AGENT_PATH,
         MUX_CLIENT_PATH,
+        RAW_AGENT_PATH,
+        RAW_CLIENT_PATH,
     )
     async with websockets.serve(
         handler,

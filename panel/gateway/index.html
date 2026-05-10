@@ -127,6 +127,13 @@
                   <input name="relay_url" type="url" placeholder="wss://relay.example.com/client-v2" required>
                 </label>
                 <label>
+                  <span>Transport</span>
+                  <select name="transport">
+                    <option value="mux">mux</option>
+                    <option value="raw">raw</option>
+                  </select>
+                </label>
+                <label>
                   <span>SOCKS Listen Host</span>
                   <input name="listen_host" placeholder="127.0.0.1" required>
                 </label>

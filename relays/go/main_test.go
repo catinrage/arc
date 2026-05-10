@@ -61,6 +61,9 @@ func TestPoolForPaths(t *testing.T) {
 	if srv.poolForAgentPath(muxAgentPath) != srv.muxPool {
 		t.Fatal("mux agent path did not resolve to mux pool")
 	}
+	if srv.poolForAgentPath(rawAgentPath) != srv.rawPool {
+		t.Fatal("raw agent path did not resolve to raw pool")
+	}
 	name, pool := srv.poolForClientPath(muxClientPath)
 	if name != muxAgentPath || pool != srv.muxPool {
 		t.Fatalf("unexpected mux client pool: %q %#v", name, pool)
@@ -68,6 +71,10 @@ func TestPoolForPaths(t *testing.T) {
 	name, pool = srv.poolForClientPath(legacyClientPath)
 	if name != legacyAgentPath || pool != srv.legacyPool {
 		t.Fatalf("unexpected legacy client pool: %q %#v", name, pool)
+	}
+	name, pool = srv.poolForClientPath(rawClientPath)
+	if name != rawAgentPath || pool != srv.rawPool {
+		t.Fatalf("unexpected raw client pool: %q %#v", name, pool)
 	}
 }
 

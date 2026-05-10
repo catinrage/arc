@@ -8,7 +8,6 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"arc/internal/mux"
 	"arc/internal/protocol"
 	"arc/internal/socks"
 	"arc/internal/udprelay"
@@ -20,7 +19,7 @@ type udpRelayClient struct {
 	next atomic.Uint64
 
 	mu      sync.Mutex
-	stream  *mux.Stream
+	stream  io.ReadWriteCloser
 	release func()
 	assocs  map[uint64]*udpAssociation
 }
@@ -180,7 +179,7 @@ func (r *udpRelayClient) writePacket(ctx context.Context, pkt udprelay.Packet) e
 	return nil
 }
 
-func (r *udpRelayClient) getStream(ctx context.Context) (*mux.Stream, error) {
+func (r *udpRelayClient) getStream(ctx context.Context) (io.ReadWriteCloser, error) {
 	r.mu.Lock()
 	stream := r.stream
 	r.mu.Unlock()
@@ -207,7 +206,7 @@ func (r *udpRelayClient) getStream(ctx context.Context) (*mux.Stream, error) {
 	return stream, nil
 }
 
-func (r *udpRelayClient) readLoop(stream *mux.Stream) {
+func (r *udpRelayClient) readLoop(stream io.ReadWriteCloser) {
 	for {
 		pkt, err := udprelay.ReadPacket(stream)
 		if err != nil {
@@ -229,7 +228,7 @@ func (r *udpRelayClient) readLoop(stream *mux.Stream) {
 	}
 }
 
-func (r *udpRelayClient) resetStream(stream *mux.Stream) {
+func (r *udpRelayClient) resetStream(stream io.ReadWriteCloser) {
 	r.mu.Lock()
 	if r.stream != stream {
 		r.mu.Unlock()

@@ -17,6 +17,9 @@ func TestLoadGatewayDefaults(t *testing.T) {
 	if cfg.MaxStreams != 1 {
 		t.Fatalf("bad max streams default: %d", cfg.MaxStreams)
 	}
+	if cfg.Transport != "mux" {
+		t.Fatalf("bad transport default: %q", cfg.Transport)
+	}
 	if !cfg.UDPEnabled {
 		t.Fatal("expected UDP to be enabled by default")
 	}
@@ -63,6 +66,14 @@ func TestGatewayRejectsBadMaxStreams(t *testing.T) {
 	cfg.MaxStreams = 0
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("expected max streams error")
+	}
+}
+
+func TestGatewayRejectsBadTransport(t *testing.T) {
+	cfg := DefaultGateway()
+	cfg.Transport = "sse"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected transport error")
 	}
 }
 

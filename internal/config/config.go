@@ -11,6 +11,7 @@ import (
 
 type Gateway struct {
 	RelayURL         string `json:"relay_url"`
+	Transport        string `json:"transport"`
 	ListenHost       string `json:"listen_host"`
 	ListenPort       int    `json:"listen_port"`
 	Connections      int    `json:"connections"`
@@ -34,6 +35,7 @@ type Gateway struct {
 
 type Agent struct {
 	RelayURL             string `json:"relay_url"`
+	Transport            string `json:"transport"`
 	Connections          int    `json:"connections"`
 	BufferSize           int    `json:"buffer_size"`
 	UDPEnabled           bool   `json:"udp_enabled"`
@@ -51,6 +53,7 @@ type Agent struct {
 func DefaultGateway() Gateway {
 	return Gateway{
 		RelayURL:         "wss://ciyn-4f0b00602d-rain.apps.ir-central1.arvancaas.ir/client-v2",
+		Transport:        "mux",
 		ListenHost:       "127.0.0.1",
 		ListenPort:       1080,
 		Connections:      32,
@@ -72,6 +75,7 @@ func DefaultGateway() Gateway {
 func DefaultAgent() Agent {
 	return Agent{
 		RelayURL:             "wss://ciyn-4f0b00602d-rain.apps.ir-central1.arvancaas.ir/agent-v2",
+		Transport:            "mux",
 		Connections:          128,
 		BufferSize:           64 << 10,
 		UDPEnabled:           true,
@@ -137,6 +141,9 @@ func (c Gateway) Validate() error {
 	if c.RelayURL == "" {
 		return errors.New("relay_url is required")
 	}
+	if err := validateTransport(c.Transport); err != nil {
+		return err
+	}
 	if c.ListenHost == "" {
 		return errors.New("listen_host is required")
 	}
@@ -180,6 +187,9 @@ func (c Agent) Validate() error {
 	if c.RelayURL == "" {
 		return errors.New("relay_url is required")
 	}
+	if err := validateTransport(c.Transport); err != nil {
+		return err
+	}
 	if c.Connections <= 0 {
 		return errors.New("connections must be positive")
 	}
@@ -197,6 +207,15 @@ func (c Agent) Validate() error {
 		"reconnect_max":           c.ReconnectMax,
 		"stats_interval":          c.StatsInterval,
 	})
+}
+
+func validateTransport(value string) error {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "mux", "raw":
+		return nil
+	default:
+		return fmt.Errorf("invalid transport %q", value)
+	}
 }
 
 func validateLogLevel(value string) error {

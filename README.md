@@ -1,14 +1,15 @@
-# Multiplexed WebSocket SOCKS5 Relay Tunnel
+# WebSocket SOCKS5 Relay Tunnel
 
 This project runs a SOCKS5 tunnel through a public WebSocket relay.
 
-The gateway and agent are Go binaries that share a framed multiplexing protocol, so each long-lived WebSocket can carry many logical TCP streams instead of burning one WebSocket per SOCKS connection.
+The gateway and agent are Go binaries. They can run in the default framed `mux` transport, or in faster `raw` transport where each SOCKS TCP connection gets one paired WebSocket lane with no inner stream multiplexing.
 
 ## Components
 
 - `relays/python/relay.py`
   - Python public relay for Python container platforms.
   - Pairs one `/client-v2` WebSocket with one `/agent-v2` WebSocket for the Go multiplexed protocol.
+  - Pairs one `/client-raw` WebSocket with one `/agent-raw` WebSocket for raw one-request lanes.
   - Keeps legacy `/client` and `/agent` pools separate so old agents cannot be paired with the Go gateway.
   - Forwards binary messages between the pair.
   - Uses bounded queues and configurable timeouts.
@@ -16,23 +17,24 @@ The gateway and agent are Go binaries that share a framed multiplexing protocol,
 - `relays/go`
   - Go public relay for Go container platforms.
   - Pairs one `/client-v2` WebSocket with one `/agent-v2` WebSocket for the Go multiplexed protocol.
+  - Pairs one `/client-raw` WebSocket with one `/agent-raw` WebSocket for raw one-request lanes.
   - Keeps legacy `/client` and `/agent` pools separate so old agents cannot be paired with the Go gateway.
   - Forwards binary messages between the pair.
   - Uses bounded queues and configurable timeouts.
 
 - `cmd/gateway`
   - Go SOCKS5 server for the Iran gateway.
-  - Keeps several persistent `/client-v2` WebSockets open.
-  - Multiplexes local SOCKS TCP streams over those sessions.
+  - In `mux` mode, keeps several persistent `/client-v2` WebSockets open and multiplexes local SOCKS TCP streams over those sessions.
+  - In `raw` mode, keeps paired `/client-raw` lanes ready and spends one lane per SOCKS TCP connection.
 
 - `cmd/agent`
   - Go Germany-side egress agent.
-  - Keeps several persistent `/agent-v2` WebSockets open.
+  - Keeps several persistent `/agent-v2` or `/agent-raw` WebSockets open.
   - Receives logical `OPEN` frames, dials target TCP servers, and relays data.
 
 ## Protocol
 
-Shared code lives in `internal/protocol` and `internal/mux`.
+Shared code lives in `internal/protocol`, `internal/mux`, and `internal/rawlane`.
 
 Each WebSocket binary message is:
 
@@ -54,6 +56,8 @@ ERROR
 ```
 
 The gateway only sends SOCKS success after the agent has actually connected to the target and replied with `OPEN_OK`.
+
+In `raw` transport, only the initial `OPEN` / `OPEN_OK` / `ERROR` control messages use this frame format. After `OPEN_OK`, WebSocket binary messages carry raw TCP bytes directly, one SOCKS connection per lane.
 
 ## Build
 
@@ -122,6 +126,7 @@ Important config:
 ```json
 {
   "relay_url": "wss://your-relay.example.com/client-v2",
+  "transport": "mux",
   "listen_host": "127.0.0.1",
   "listen_port": 1080,
   "connections": 32,
@@ -142,6 +147,18 @@ Important config:
 
 For maximum throughput, keep `max_streams_per_session` at `1`. `connections` are always-on lanes; `burst_connections` are temporary one-shot lanes used when all always-on lanes are busy. This avoids multiplexing head-of-line blocking while still handling browser-style connection spikes.
 
+For the raw lane transport, use `/client-raw` and `transport: "raw"` on the gateway:
+
+```json
+{
+  "relay_url": "wss://your-relay.example.com/client-raw",
+  "transport": "raw",
+  "connections": 128,
+  "burst_connections": 128,
+  "buffer_size": 131072
+}
+```
+
 The gateway admin panel is served from `panel/gateway/` when `admin_listen` is set. Open `http://127.0.0.1:8090` and sign in with `admin_username` / `admin_password`. The panel shows live SOCKS listener state, active relay sessions, recent SOCKS destinations, gateway config editing, and service actions.
 
 ## Agent
@@ -157,6 +174,7 @@ Important config:
 ```json
 {
   "relay_url": "wss://your-relay.example.com/agent-v2",
+  "transport": "mux",
   "connections": 128,
   "buffer_size": 65536,
   "udp_enabled": true,
@@ -169,6 +187,17 @@ Important config:
 ```
 
 Run enough agent connections for both gateway steady lanes and burst lanes. For the default highway profile, gateway uses `32 + 96`, so agent uses `128`.
+
+For raw lane transport, use `/agent-raw` and `transport: "raw"` on the agent. The agent should have at least `gateway connections + gateway burst_connections` lanes:
+
+```json
+{
+  "relay_url": "wss://your-relay.example.com/agent-raw",
+  "transport": "raw",
+  "connections": 256,
+  "buffer_size": 131072
+}
+```
 
 ## Service Manager
 

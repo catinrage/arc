@@ -7,7 +7,11 @@ Arc relays are intentionally interchangeable. Both implementations expose the sa
 /client
 /agent-v2
 /client-v2
+/agent-raw
+/client-raw
 ```
+
+Use `/agent-v2` and `/client-v2` for the default mux transport. Use `/agent-raw` and `/client-raw` for raw paired lanes, where each SOCKS TCP connection consumes one paired WebSocket lane.
 
 Use the Python relay on Python container platforms:
 

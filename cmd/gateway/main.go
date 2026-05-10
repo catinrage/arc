@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"arc/internal/config"
 	"arc/internal/mux"
 	"arc/internal/protocol"
+	"arc/internal/rawlane"
 	"arc/internal/socks"
 	"arc/internal/wsclient"
 )
@@ -29,6 +31,7 @@ var (
 type sessionSlot struct {
 	mu      sync.RWMutex
 	session *mux.Session
+	raw     *rawlane.PumpedWire
 	active  int
 	gen     uint64
 }
@@ -136,9 +139,16 @@ func (g *gateway) run(ctx context.Context) error {
 		go g.runAdmin(ctx)
 	}
 
-	for i := range g.slots {
-		go g.connectLoop(ctx, i)
-		sleepContext(ctx, g.connectRamp)
+	if g.rawTransport() {
+		for i := range g.slots {
+			go g.connectRawLoop(ctx, i)
+			sleepContext(ctx, g.connectRamp)
+		}
+	} else {
+		for i := range g.slots {
+			go g.connectLoop(ctx, i)
+			sleepContext(ctx, g.connectRamp)
+		}
 	}
 	go g.statsLoop(ctx)
 
@@ -149,7 +159,7 @@ func (g *gateway) run(ctx context.Context) error {
 	}
 	defer listener.Close()
 
-	g.log.Infof("gateway SOCKS5 listening on %s, relay=%s, sessions=%d burst=%d max_streams_per_session=%d log_file=%q log_level=%s", addr, g.cfg.RelayURL, g.cfg.Connections, g.cfg.BurstConnections, g.cfg.MaxStreams, g.cfg.LogFile, g.cfg.LogLevel)
+	g.log.Infof("gateway SOCKS5 listening on %s, relay=%s, transport=%s sessions=%d burst=%d max_streams_per_session=%d log_file=%q log_level=%s", addr, g.cfg.RelayURL, g.transport(), g.cfg.Connections, g.cfg.BurstConnections, g.cfg.MaxStreams, g.cfg.LogFile, g.cfg.LogLevel)
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -161,6 +171,17 @@ func (g *gateway) run(ctx context.Context) error {
 		}
 		go g.handleConn(ctx, conn)
 	}
+}
+
+func (g *gateway) transport() string {
+	if g.cfg.Transport == "" {
+		return "mux"
+	}
+	return strings.ToLower(g.cfg.Transport)
+}
+
+func (g *gateway) rawTransport() bool {
+	return g.transport() == "raw"
 }
 
 func (g *gateway) connectLoop(ctx context.Context, idx int) {
@@ -207,6 +228,57 @@ func (g *gateway) connectLoop(ctx context.Context, idx int) {
 		if err != nil && !errors.Is(err, context.Canceled) {
 			g.log.Warnf("session %d closed: %v", idx, err)
 		}
+		sleepContext(ctx, backoff)
+		backoff = growBackoff(backoff, g.reconnectMax)
+	}
+}
+
+func (g *gateway) connectRawLoop(ctx context.Context, idx int) {
+	backoff := g.reconnectMin
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		dialCtx, cancel := context.WithTimeout(ctx, g.relayTimeout)
+		wire, err := wsclient.Dial(dialCtx, g.cfg.RelayURL, wsclient.DialOptions{
+			HandshakeTimeout: g.relayTimeout,
+			InsecureTLS:      g.cfg.InsecureTLS,
+			Logger:           g.log,
+			SessionID:        idx,
+		})
+		if err != nil {
+			cancel()
+			g.log.Warnf("raw lane %d relay connect failed: %v", idx, err)
+			sleepContext(ctx, backoff)
+			backoff = growBackoff(backoff, g.reconnectMax)
+			continue
+		}
+
+		if err := waitReady(dialCtx, wire); err != nil {
+			cancel()
+			_ = wire.Close()
+			g.log.Warnf("raw lane %d relay pair failed: %v", idx, err)
+			sleepContext(ctx, backoff)
+			backoff = growBackoff(backoff, g.reconnectMax)
+			continue
+		}
+		cancel()
+
+		lane := rawlane.NewPumpedWire(wire, 64)
+		g.setRawLane(idx, lane)
+		g.log.Infof("raw lane %d connected and paired", idx)
+		backoff = g.reconnectMin
+
+		select {
+		case <-ctx.Done():
+			_ = lane.Close()
+		case <-lane.Done():
+		}
+		g.clearRawLane(idx, lane)
+		g.log.Debugf("raw lane %d closed", idx)
 		sleepContext(ctx, backoff)
 		backoff = growBackoff(backoff, g.reconnectMax)
 	}
@@ -305,7 +377,14 @@ func udpReplyAddr(udpAddr *net.UDPAddr, controlAddr net.Addr) *net.UDPAddr {
 	return udpAddr
 }
 
-func (g *gateway) open(ctx context.Context, req protocol.OpenRequest) (*mux.Stream, func(), error) {
+func (g *gateway) open(ctx context.Context, req protocol.OpenRequest) (io.ReadWriteCloser, func(), error) {
+	if g.rawTransport() {
+		return g.openRaw(ctx, req)
+	}
+	return g.openMux(ctx, req)
+}
+
+func (g *gateway) openMux(ctx context.Context, req protocol.OpenRequest) (io.ReadWriteCloser, func(), error) {
 	if len(g.slots) == 0 {
 		return nil, nil, errors.New("no relay sessions configured")
 	}
@@ -330,6 +409,44 @@ func (g *gateway) open(ctx context.Context, req protocol.OpenRequest) (*mux.Stre
 		if err != errNoBurstCapacity {
 			lastErr = err
 			g.log.Debugf("burst open failed: %v", err)
+		}
+
+		select {
+		case <-ctx.Done():
+			if lastErr != nil {
+				return nil, nil, lastErr
+			}
+			return nil, nil, ctx.Err()
+		case <-time.After(25 * time.Millisecond):
+		}
+	}
+}
+
+func (g *gateway) openRaw(ctx context.Context, req protocol.OpenRequest) (io.ReadWriteCloser, func(), error) {
+	if len(g.slots) == 0 {
+		return nil, nil, errors.New("no raw relay lanes configured")
+	}
+
+	var lastErr error
+	for {
+		idx, lane, release, ok := g.reserveRawLane()
+		if ok {
+			stream, err := rawlane.Open(ctx, lane, req)
+			if err == nil {
+				return stream, release, nil
+			}
+			release()
+			g.log.Debugf("raw lane %d open failed while reserved: %v", idx, err)
+			lastErr = err
+		}
+
+		stream, release, err := g.openRawBurst(ctx, req)
+		if err == nil {
+			return stream, release, nil
+		}
+		if err != errNoBurstCapacity {
+			lastErr = err
+			g.log.Debugf("raw burst open failed: %v", err)
 		}
 
 		select {
@@ -410,6 +527,61 @@ func (g *gateway) openBurst(ctx context.Context, req protocol.OpenRequest) (*mux
 	return stream, release, nil
 }
 
+func (g *gateway) openRawBurst(ctx context.Context, req protocol.OpenRequest) (io.ReadWriteCloser, func(), error) {
+	if g.cfg.BurstConnections <= 0 {
+		return nil, nil, errNoBurstCapacity
+	}
+
+	select {
+	case g.burstTokens <- struct{}{}:
+	case <-ctx.Done():
+		return nil, nil, ctx.Err()
+	default:
+		return nil, nil, errNoBurstCapacity
+	}
+
+	released := false
+	releaseToken := func() {
+		if released {
+			return
+		}
+		released = true
+		<-g.burstTokens
+		g.burst.Add(-1)
+	}
+	g.burst.Add(1)
+
+	wire, err := wsclient.Dial(ctx, g.cfg.RelayURL, wsclient.DialOptions{
+		HandshakeTimeout: g.relayTimeout,
+		InsecureTLS:      g.cfg.InsecureTLS,
+		Logger:           g.log,
+		SessionID:        -1,
+	})
+	if err != nil {
+		releaseToken()
+		return nil, nil, err
+	}
+
+	if err := waitReady(ctx, wire); err != nil {
+		_ = wire.Close()
+		releaseToken()
+		return nil, nil, err
+	}
+
+	stream, err := rawlane.Open(ctx, wire, req)
+	if err != nil {
+		_ = wire.Close()
+		releaseToken()
+		return nil, nil, err
+	}
+
+	release := func() {
+		_ = stream.Close()
+		releaseToken()
+	}
+	return stream, release, nil
+}
+
 func (g *gateway) reserveSession() (int, *mux.Session, func(), bool) {
 	if len(g.slots) == 0 {
 		return 0, nil, nil, false
@@ -466,11 +638,66 @@ func (g *gateway) reserveSession() (int, *mux.Session, func(), bool) {
 	return bestIdx, session, release, true
 }
 
+func (g *gateway) reserveRawLane() (int, *rawlane.PumpedWire, func(), bool) {
+	if len(g.slots) == 0 {
+		return 0, nil, nil, false
+	}
+
+	start := int(g.next.Add(1))
+	for i := range g.slots {
+		idx := (start + i) % len(g.slots)
+		slot := &g.slots[idx]
+		slot.mu.Lock()
+		if slot.raw == nil || slot.active > 0 {
+			slot.mu.Unlock()
+			continue
+		}
+		lane := slot.raw
+		slot.raw = nil
+		slot.active = 1
+		slot.gen++
+		gen := slot.gen
+		released := false
+		release := func() {
+			slot.mu.Lock()
+			defer slot.mu.Unlock()
+			if released {
+				return
+			}
+			released = true
+			if slot.gen == gen && slot.active > 0 {
+				slot.active--
+			}
+			_ = lane.Close()
+		}
+		slot.mu.Unlock()
+		return idx, lane, release, true
+	}
+	return 0, nil, nil, false
+}
+
 func (g *gateway) setSession(idx int, session *mux.Session) {
 	g.slots[idx].mu.Lock()
 	g.slots[idx].session = session
 	g.slots[idx].active = 0
 	g.slots[idx].gen++
+	g.slots[idx].mu.Unlock()
+}
+
+func (g *gateway) setRawLane(idx int, lane *rawlane.PumpedWire) {
+	g.slots[idx].mu.Lock()
+	g.slots[idx].raw = lane
+	g.slots[idx].active = 0
+	g.slots[idx].gen++
+	g.slots[idx].mu.Unlock()
+}
+
+func (g *gateway) clearRawLane(idx int, lane *rawlane.PumpedWire) {
+	g.slots[idx].mu.Lock()
+	if g.slots[idx].raw == lane || g.slots[idx].raw == nil {
+		g.slots[idx].raw = nil
+		g.slots[idx].active = 0
+	}
 	g.slots[idx].mu.Unlock()
 }
 
@@ -507,9 +734,10 @@ func (g *gateway) statsLoop(ctx context.Context) {
 			for i := range g.slots {
 				g.slots[i].mu.RLock()
 				session := g.slots[i].session
+				raw := g.slots[i].raw
 				active := g.slots[i].active
 				g.slots[i].mu.RUnlock()
-				if session != nil {
+				if session != nil || raw != nil {
 					ready++
 					streams += int64(active)
 				}

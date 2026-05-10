@@ -26,6 +26,8 @@ const (
 	legacyClientPath = "/client"
 	muxAgentPath     = "/agent-v2"
 	muxClientPath    = "/client-v2"
+	rawAgentPath     = "/agent-raw"
+	rawClientPath    = "/client-raw"
 )
 
 type relayConfig struct {
@@ -46,6 +48,7 @@ type relayServer struct {
 
 	legacyPool *agentPool
 	muxPool    *agentPool
+	rawPool    *agentPool
 
 	activePairs atomic.Int64
 	totalPairs  atomic.Int64
@@ -76,7 +79,7 @@ func main() {
 	go srv.statsLoop(context.Background())
 
 	addr := net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port))
-	log.Printf("relay listening on %s queue=%d legacy=(%s,%s) mux=(%s,%s)", addr, cfg.AgentQueueSize, legacyAgentPath, legacyClientPath, muxAgentPath, muxClientPath)
+	log.Printf("relay listening on %s queue=%d legacy=(%s,%s) mux=(%s,%s) raw=(%s,%s)", addr, cfg.AgentQueueSize, legacyAgentPath, legacyClientPath, muxAgentPath, muxClientPath, rawAgentPath, rawClientPath)
 	server := &http.Server{
 		Addr:              addr,
 		Handler:           srv,
@@ -92,6 +95,7 @@ func newRelayServer(cfg relayConfig) *relayServer {
 		cfg:        cfg,
 		legacyPool: newAgentPool(cfg.AgentQueueSize),
 		muxPool:    newAgentPool(cfg.AgentQueueSize),
+		rawPool:    newAgentPool(cfg.AgentQueueSize),
 	}
 }
 
@@ -146,6 +150,8 @@ func (s *relayServer) poolForAgentPath(path string) *agentPool {
 		return s.legacyPool
 	case muxAgentPath:
 		return s.muxPool
+	case rawAgentPath:
+		return s.rawPool
 	default:
 		return nil
 	}
@@ -157,6 +163,8 @@ func (s *relayServer) poolForClientPath(path string) (string, *agentPool) {
 		return legacyAgentPath, s.legacyPool
 	case muxClientPath:
 		return muxAgentPath, s.muxPool
+	case rawClientPath:
+		return rawAgentPath, s.rawPool
 	default:
 		return "", nil
 	}
@@ -207,11 +215,12 @@ func (s *relayServer) statsLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			log.Printf(
-				"stats active_pairs=%d total_pairs=%d queued_legacy=%d queued_mux=%d",
+				"stats active_pairs=%d total_pairs=%d queued_legacy=%d queued_mux=%d queued_raw=%d",
 				s.activePairs.Load(),
 				s.totalPairs.Load(),
 				s.legacyPool.qsize(),
 				s.muxPool.qsize(),
+				s.rawPool.qsize(),
 			)
 		}
 	}

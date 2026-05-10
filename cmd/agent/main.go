@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"arc/internal/config"
 	"arc/internal/mux"
 	"arc/internal/protocol"
+	"arc/internal/rawlane"
 	"arc/internal/udprelay"
 	"arc/internal/wsclient"
 )
@@ -107,12 +109,27 @@ func newAgent(cfg config.Agent, logger *applog.Logger) (*agent, error) {
 }
 
 func (a *agent) run(ctx context.Context) {
-	a.log.Infof("agent connecting relay=%s sessions=%d log_file=%q log_level=%s", a.cfg.RelayURL, a.cfg.Connections, a.cfg.LogFile, a.cfg.LogLevel)
+	a.log.Infof("agent connecting relay=%s transport=%s sessions=%d log_file=%q log_level=%s", a.cfg.RelayURL, a.transport(), a.cfg.Connections, a.cfg.LogFile, a.cfg.LogLevel)
 	for i := 0; i < a.cfg.Connections; i++ {
-		go a.connectLoop(ctx, i)
+		if a.rawTransport() {
+			go a.connectRawLoop(ctx, i)
+		} else {
+			go a.connectLoop(ctx, i)
+		}
 		sleepContext(ctx, a.connectRamp)
 	}
 	a.statsLoop(ctx)
+}
+
+func (a *agent) transport() string {
+	if a.cfg.Transport == "" {
+		return "mux"
+	}
+	return strings.ToLower(a.cfg.Transport)
+}
+
+func (a *agent) rawTransport() bool {
+	return a.transport() == "raw"
 }
 
 func (a *agent) connectLoop(ctx context.Context, idx int) {
@@ -156,6 +173,52 @@ func (a *agent) connectLoop(ctx context.Context, idx int) {
 		a.ready.Add(-1)
 		if err != nil && !errors.Is(err, context.Canceled) {
 			a.log.Warnf("session %d closed: %v", idx, err)
+		}
+		sleepContext(ctx, backoff)
+		backoff = growBackoff(backoff, a.reconnectMax)
+	}
+}
+
+func (a *agent) connectRawLoop(ctx context.Context, idx int) {
+	backoff := a.reconnectMin
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		dialCtx, cancel := context.WithTimeout(ctx, a.relayTimeout)
+		wire, err := wsclient.Dial(dialCtx, a.cfg.RelayURL, wsclient.DialOptions{
+			HandshakeTimeout: a.relayTimeout,
+			InsecureTLS:      a.cfg.InsecureTLS,
+			Logger:           a.log,
+			SessionID:        idx,
+		})
+		cancel()
+		if err != nil {
+			a.log.Warnf("raw lane %d relay connect failed: %v", idx, err)
+			sleepContext(ctx, backoff)
+			backoff = growBackoff(backoff, a.reconnectMax)
+			continue
+		}
+
+		if err := sendReady(wire); err != nil {
+			_ = wire.Close()
+			a.log.Warnf("raw lane %d ready send failed: %v", idx, err)
+			sleepContext(ctx, backoff)
+			backoff = growBackoff(backoff, a.reconnectMax)
+			continue
+		}
+
+		a.ready.Add(1)
+		a.log.Infof("raw lane %d ready", idx)
+		backoff = a.reconnectMin
+
+		err = rawlane.Serve(ctx, wire, a.dialTarget, a.cfg.BufferSize)
+		a.ready.Add(-1)
+		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, io.EOF) {
+			a.log.Warnf("raw lane %d closed: %v", idx, err)
 		}
 		sleepContext(ctx, backoff)
 		backoff = growBackoff(backoff, a.reconnectMax)

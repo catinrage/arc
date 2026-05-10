@@ -26,6 +26,7 @@ class RelayTests(unittest.IsolatedAsyncioTestCase):
         relay.pools = {
             relay.LEGACY_AGENT_PATH: relay.AgentPool(relay.AGENT_QUEUE_SIZE),
             relay.MUX_AGENT_PATH: relay.AgentPool(relay.AGENT_QUEUE_SIZE),
+            relay.RAW_AGENT_PATH: relay.AgentPool(relay.AGENT_QUEUE_SIZE),
         }
 
     async def test_get_live_agent_skips_closed(self):
@@ -56,10 +57,13 @@ class RelayTests(unittest.IsolatedAsyncioTestCase):
     async def test_paths_use_separate_pools(self):
         legacy_name, legacy_pool = relay.pool_for_client_path(relay.LEGACY_CLIENT_PATH)
         mux_name, mux_pool = relay.pool_for_client_path(relay.MUX_CLIENT_PATH)
+        raw_name, raw_pool = relay.pool_for_client_path(relay.RAW_CLIENT_PATH)
 
         self.assertEqual(legacy_name, relay.LEGACY_AGENT_PATH)
         self.assertEqual(mux_name, relay.MUX_AGENT_PATH)
+        self.assertEqual(raw_name, relay.RAW_AGENT_PATH)
         self.assertIsNot(legacy_pool, mux_pool)
+        self.assertIsNot(raw_pool, mux_pool)
 
     async def test_close_pair_closes_both(self):
         client = FakeWebSocket()

@@ -1,12 +1,14 @@
 package main
 
 import (
+	"io"
 	"net"
 	"testing"
 	"time"
 
 	"arc/internal/config"
 	"arc/internal/mux"
+	"arc/internal/rawlane"
 )
 
 func TestNewGateway(t *testing.T) {
@@ -86,6 +88,38 @@ func TestReservationReleaseDoesNotAffectReconnectedSlot(t *testing.T) {
 	}
 	newRelease()
 }
+
+func TestReserveRawLaneConsumesReadyLane(t *testing.T) {
+	cfg := config.DefaultGateway()
+	cfg.Transport = "raw"
+	cfg.Connections = 1
+
+	gw, err := newGateway(cfg, "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lane := rawlane.NewPumpedWire(&eofWire{}, 1)
+	gw.setRawLane(0, lane)
+
+	_, got, release, ok := gw.reserveRawLane()
+	if !ok {
+		t.Fatal("expected raw lane reservation")
+	}
+	if got != lane {
+		t.Fatal("reserved wrong lane")
+	}
+	if _, _, _, ok := gw.reserveRawLane(); ok {
+		t.Fatal("expected raw lane to be consumed")
+	}
+	release()
+}
+
+type eofWire struct{}
+
+func (eofWire) ReadMessage() ([]byte, error) { return nil, io.EOF }
+
+func (eofWire) WriteMessage([]byte) error { return nil }
+func (eofWire) Close() error              { return nil }
 
 func TestGrowBackoff(t *testing.T) {
 	got := growBackoff(250*time.Millisecond, time.Second)

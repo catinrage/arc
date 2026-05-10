@@ -57,6 +57,7 @@ type socksState struct {
 
 type relayState struct {
 	URL             string `json:"url"`
+	Transport       string `json:"transport"`
 	ReadySessions   int    `json:"ready_sessions"`
 	ConfigSessions  int    `json:"config_sessions"`
 	ActiveStreams   int64  `json:"active_streams"`
@@ -222,9 +223,10 @@ func (g *gateway) adminState() adminState {
 	for i := range g.slots {
 		g.slots[i].mu.RLock()
 		session := g.slots[i].session
+		raw := g.slots[i].raw
 		active := g.slots[i].active
 		g.slots[i].mu.RUnlock()
-		if session != nil {
+		if session != nil || raw != nil {
 			ready++
 			streams += int64(active)
 		}
@@ -242,6 +244,7 @@ func (g *gateway) adminState() adminState {
 		},
 		Relay: relayState{
 			URL:             g.cfg.RelayURL,
+			Transport:       g.transport(),
 			ReadySessions:   ready,
 			ConfigSessions:  len(g.slots),
 			ActiveStreams:   streams,
