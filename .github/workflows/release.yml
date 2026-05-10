@@ -78,13 +78,14 @@ jobs:
 
           GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "${LD_FLAGS}" -o "${RELEASE_DIR}/arc-gateway" ./cmd/gateway
           GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "${LD_FLAGS}" -o "${RELEASE_DIR}/arc-agent" ./cmd/agent
+          GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "${LD_FLAGS}" -o "${RELEASE_DIR}/arc-relay-go" ./relays/go
 
-          cp relay.py "${RELEASE_DIR}/"
           cp service.sh "${RELEASE_DIR}/"
           cp gateway.example.json "${RELEASE_DIR}/"
           cp agent.example.json "${RELEASE_DIR}/"
           cp README.md "${RELEASE_DIR}/"
           cp -R panel "${RELEASE_DIR}/"
+          cp -R relays "${RELEASE_DIR}/"
 
           tar -C dist -czf "dist/arc_${VERSION}_linux_amd64.tar.gz" "arc_${VERSION}_linux_amd64"
           sha256sum "dist/arc_${VERSION}_linux_amd64.tar.gz" > "dist/arc_${VERSION}_linux_amd64.tar.gz.sha256"
@@ -98,4 +99,3 @@ jobs:
           files: |
             dist/arc_${{ steps.meta.outputs.version }}_linux_amd64.tar.gz
             dist/arc_${{ steps.meta.outputs.version }}_linux_amd64.tar.gz.sha256
-            relay.py

@@ -273,42 +273,41 @@ func (c *Conn) writeFrame(opcode byte, payload []byte) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	var hdr []byte
 	length := len(payload)
+	headerLen := 2
 	switch {
 	case length < 126:
-		hdr = []byte{0x80 | opcode, 0x80 | byte(length)}
+		headerLen = 2
 	case length <= math.MaxUint16:
-		hdr = make([]byte, 4)
-		hdr[0] = 0x80 | opcode
-		hdr[1] = 0x80 | 126
-		binary.BigEndian.PutUint16(hdr[2:], uint16(length))
+		headerLen = 4
 	default:
-		hdr = make([]byte, 10)
-		hdr[0] = 0x80 | opcode
-		hdr[1] = 0x80 | 127
-		binary.BigEndian.PutUint64(hdr[2:], uint64(length))
+		headerLen = 10
+	}
+
+	frame := make([]byte, headerLen+4+length)
+	frame[0] = 0x80 | opcode
+	switch headerLen {
+	case 2:
+		frame[1] = 0x80 | byte(length)
+	case 4:
+		frame[1] = 0x80 | 126
+		binary.BigEndian.PutUint16(frame[2:4], uint16(length))
+	case 10:
+		frame[1] = 0x80 | 127
+		binary.BigEndian.PutUint64(frame[2:10], uint64(length))
 	}
 
 	var mask [4]byte
 	if _, err := rand.Read(mask[:]); err != nil {
 		return err
 	}
-	masked := make([]byte, len(payload))
+	copy(frame[headerLen:], mask[:])
+	masked := frame[headerLen+4:]
 	for i := range payload {
 		masked[i] = payload[i] ^ mask[i%4]
 	}
 
-	if _, err := c.conn.Write(hdr); err != nil {
-		return err
-	}
-	if _, err := c.conn.Write(mask[:]); err != nil {
-		return err
-	}
-	if len(masked) == 0 {
-		return nil
-	}
-	_, err := c.conn.Write(masked)
+	_, err := c.conn.Write(frame)
 	return err
 }
 

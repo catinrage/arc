@@ -1,9 +1,11 @@
 import asyncio
+import pathlib
 import sys
 import types
 import unittest
 from unittest import mock
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 sys.modules.setdefault("websockets", types.SimpleNamespace(serve=None))
 
 import relay

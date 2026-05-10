@@ -1,13 +1,20 @@
 # Multiplexed WebSocket SOCKS5 Relay Tunnel
 
-This project runs a SOCKS5 tunnel through a public Python WebSocket relay.
+This project runs a SOCKS5 tunnel through a public WebSocket relay.
 
-The relay remains Python. The gateway and agent are Go binaries that share a framed multiplexing protocol, so each long-lived WebSocket can carry many logical TCP streams instead of burning one WebSocket per SOCKS connection.
+The gateway and agent are Go binaries that share a framed multiplexing protocol, so each long-lived WebSocket can carry many logical TCP streams instead of burning one WebSocket per SOCKS connection.
 
 ## Components
 
-- `relay.py`
-  - Python public relay.
+- `relays/python/relay.py`
+  - Python public relay for Python container platforms.
+  - Pairs one `/client-v2` WebSocket with one `/agent-v2` WebSocket for the Go multiplexed protocol.
+  - Keeps legacy `/client` and `/agent` pools separate so old agents cannot be paired with the Go gateway.
+  - Forwards binary messages between the pair.
+  - Uses bounded queues and configurable timeouts.
+
+- `relays/go`
+  - Go public relay for Go container platforms.
   - Pairs one `/client-v2` WebSocket with one `/agent-v2` WebSocket for the Go multiplexed protocol.
   - Keeps legacy `/client` and `/agent` pools separate so old agents cannot be paired with the Go gateway.
   - Forwards binary messages between the pair.
@@ -54,6 +61,7 @@ The gateway only sends SOCKS success after the agent has actually connected to t
 /usr/local/go/bin/go test ./...
 /usr/local/go/bin/go build -o bin/arc-gateway ./cmd/gateway
 /usr/local/go/bin/go build -o bin/arc-agent ./cmd/agent
+/usr/local/go/bin/go build -o bin/arc-relay-go ./relays/go
 ```
 
 ## Relay
@@ -69,14 +77,24 @@ pip install websockets uvloop
 Run:
 
 ```bash
-RELAY_PORT=80 RELAY_WS_MAX_QUEUE=64 RELAY_AGENT_QUEUE_SIZE=1024 python3 relay.py
+RELAY_PORT=80 RELAY_WS_MAX_QUEUE=64 RELAY_AGENT_QUEUE_SIZE=1024 python3 relays/python/relay.py
 ```
+
+Run the Go relay instead:
+
+```bash
+/usr/local/go/bin/go build -o bin/arc-relay-go ./relays/go
+RELAY_PORT=80 RELAY_AGENT_QUEUE_SIZE=1024 ./bin/arc-relay-go
+```
+
+For a minimal Go relay container, copy `go.mod` and `relays/go/main.go` into one directory, then run `go build -o arc-relay-go .`.
 
 Useful relay environment:
 
 ```text
 RELAY_HOST=0.0.0.0
 RELAY_PORT=80
+PORT=80
 RELAY_AGENT_QUEUE_SIZE=1024
 RELAY_WS_MAX_QUEUE=64
 RELAY_PAIR_TIMEOUT=15
@@ -87,6 +105,9 @@ RELAY_CLOSE_TIMEOUT=3
 RELAY_LOG_LEVEL=INFO
 RELAY_LOG_FILE=
 ```
+
+The Python and Go relays expose the same WebSocket paths and pairing behavior. Gateway and agent `relay_url` values do not change when swapping relay implementations.
+The Go relay reads `RELAY_PORT` first, then falls back to container-platform `PORT`, returns `relay alive` for normal HTTP health checks, and sends WebSocket pings like the Python relay to keep queued and paired lanes alive behind proxies.
 
 ## Gateway
 
@@ -151,7 +172,7 @@ Run enough agent connections for both gateway steady lanes and burst lanes. For 
 
 ## Service Manager
 
-Release packages include `arc-agent`, `arc-gateway`, `relay.py`, config examples, `panel/gateway`, and `service.sh`.
+Release packages include `arc-agent`, `arc-gateway`, `arc-relay-go`, `relays/`, config examples, `panel/gateway`, and `service.sh`.
 
 Initialize and start a systemd service:
 
@@ -250,7 +271,6 @@ Release assets:
 ```text
 arc_<version>_linux_amd64.tar.gz
 arc_<version>_linux_amd64.tar.gz.sha256
-relay.py
 ```
 
 ## Tests
@@ -264,7 +284,7 @@ Go:
 Relay helpers:
 
 ```bash
-python3 -m unittest test_relay.py
+python3 -m unittest discover -s relays/python -v
 ```
 
 ## Network Tuning
