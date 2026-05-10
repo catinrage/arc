@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"io"
 	"net"
 	"testing"
@@ -8,6 +9,7 @@ import (
 
 	"arc/internal/config"
 	"arc/internal/mux"
+	"arc/internal/protocol"
 	"arc/internal/rawlane"
 )
 
@@ -114,12 +116,57 @@ func TestReserveRawLaneConsumesReadyLane(t *testing.T) {
 	release()
 }
 
+func TestOpenRawUsesReadyLaneBeforeBurst(t *testing.T) {
+	cfg := config.DefaultGateway()
+	cfg.Transport = "raw"
+	cfg.Connections = 2
+	cfg.BurstConnections = 0
+	cfg.OpenTimeout = "100ms"
+
+	gw, err := newGateway(cfg, "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gw.setRawLane(0, rawlane.NewPumpedWire(&errorWire{}, 1))
+	gw.setRawLane(1, rawlane.NewPumpedWire(&openOKWire{}, 1))
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	stream, release, err := gw.openRaw(ctx, protocol.OpenRequest{Host: "example.com", Port: 443})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = stream.Close()
+	release()
+}
+
 type eofWire struct{}
 
 func (eofWire) ReadMessage() ([]byte, error) { return nil, io.EOF }
 
 func (eofWire) WriteMessage([]byte) error { return nil }
 func (eofWire) Close() error              { return nil }
+
+type errorWire struct{}
+
+func (errorWire) ReadMessage() ([]byte, error) { return nil, io.EOF }
+func (errorWire) WriteMessage([]byte) error    { return nil }
+func (errorWire) Close() error                 { return nil }
+
+type openOKWire struct {
+	closed bool
+}
+
+func (w *openOKWire) ReadMessage() ([]byte, error) {
+	if w.closed {
+		return nil, io.EOF
+	}
+	w.closed = true
+	return protocol.EncodeMessage(protocol.Message{Type: protocol.TypeOpenOK})
+}
+
+func (w *openOKWire) WriteMessage([]byte) error { return nil }
+func (w *openOKWire) Close() error              { return nil }
 
 func TestGrowBackoff(t *testing.T) {
 	got := growBackoff(250*time.Millisecond, time.Second)

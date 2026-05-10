@@ -429,8 +429,13 @@ func (g *gateway) openRaw(ctx context.Context, req protocol.OpenRequest) (io.Rea
 
 	var lastErr error
 	for {
-		idx, lane, release, ok := g.reserveRawLane()
-		if ok {
+		triedReadyLane := false
+		for {
+			idx, lane, release, ok := g.reserveRawLane()
+			if !ok {
+				break
+			}
+			triedReadyLane = true
 			stream, err := rawlane.Open(ctx, lane, req)
 			if err == nil {
 				return stream, release, nil
@@ -440,13 +445,15 @@ func (g *gateway) openRaw(ctx context.Context, req protocol.OpenRequest) (io.Rea
 			lastErr = err
 		}
 
-		stream, release, err := g.openRawBurst(ctx, req)
-		if err == nil {
-			return stream, release, nil
-		}
-		if err != errNoBurstCapacity {
-			lastErr = err
-			g.log.Debugf("raw burst open failed: %v", err)
+		if !triedReadyLane {
+			stream, release, err := g.openRawBurst(ctx, req)
+			if err == nil {
+				return stream, release, nil
+			}
+			if err != errNoBurstCapacity {
+				lastErr = err
+				g.log.Debugf("raw burst open failed: %v", err)
+			}
 		}
 
 		select {
@@ -739,8 +746,8 @@ func (g *gateway) statsLoop(ctx context.Context) {
 				g.slots[i].mu.RUnlock()
 				if session != nil || raw != nil {
 					ready++
-					streams += int64(active)
 				}
+				streams += int64(active)
 			}
 			g.log.Infof("stats active=%d total=%d sessions=%d/%d streams=%d burst=%d/%d max_streams_per_session=%d", g.active.Load(), g.total.Load(), ready, len(g.slots), streams, g.burst.Load(), g.cfg.BurstConnections, g.cfg.MaxStreams)
 		}

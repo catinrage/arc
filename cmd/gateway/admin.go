@@ -228,8 +228,8 @@ func (g *gateway) adminState() adminState {
 		g.slots[i].mu.RUnlock()
 		if session != nil || raw != nil {
 			ready++
-			streams += int64(active)
 		}
+		streams += int64(active)
 	}
 
 	return adminState{
